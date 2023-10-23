@@ -26,19 +26,24 @@ int PlcPcd::ParseFrom(const FibRgFcLcb97_t &fib_rg_fc_lcb97,
                       const std::vector<char> &table_stream) {
   const char *clx_ptr = table_stream.data() + fib_rg_fc_lcb97.fcClx;
   const char *pcdt_ptr = nullptr;
-  auto *clxt = reinterpret_cast<const uint8_t *>(clx_ptr);
-  if (*clxt == 0x02) {
+
+  const char *clx_m_ptr = clx_ptr;
+#define clxt reinterpret_cast<const uint8_t *>(clx_m_ptr)
+  for (; clx_m_ptr < table_stream.data() + table_stream.size() &&
+         *clxt == 0x01;) {
+    auto cbGrpprl = reinterpret_cast<const int16_t *>(clx_m_ptr + 1);
+    clx_m_ptr += 1 + 2 + *cbGrpprl;
+  }
+
+  if (clx_m_ptr < table_stream.data() + table_stream.size() && *clxt == 0x02) {
     pcdt_ptr = clx_ptr;
-  } else if (*clxt == 0x01) {
-    auto cbGrpprl = reinterpret_cast<const uint16_t *>(clx_ptr + 1);
-    pcdt_ptr = clx_ptr + 1 + *cbGrpprl;
   } else {
     return -1;
   }
+#undef clxt
 
-  clxt = reinterpret_cast<const uint8_t *>(pcdt_ptr);
-  if (*clxt != 0x02 || pcdt_ptr - table_stream.data() + 1 + sizeof(uint32_t) >
-                           table_stream.size()) {
+  if (pcdt_ptr - table_stream.data() + 1 + sizeof(uint32_t) >
+      table_stream.size()) {
     return -1;
   }
   auto lcb = reinterpret_cast<const uint32_t *>(pcdt_ptr + 1);

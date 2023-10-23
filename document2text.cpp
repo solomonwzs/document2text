@@ -173,11 +173,13 @@ int main(int argc, char **argv) {
   assert(argc >= 2);
   const char *filename = argv[1];
 
+  simplepdf::Init(nullptr);
+
   std::vector<char> data;
   assert(utils::read_file(filename, &data) == 0);
   fetch_opts_t opts = {
-      .max_fetch_text_len = 4096,
-      .max_fetch_pdf_page_cnt = 10,
+      .max_fetch_text_len = 40960,
+      .max_fetch_pdf_page_cnt = 20,
   };
   std::string text;
   assert(document2text(data.data(), data.size(), opts, &text) == 0);

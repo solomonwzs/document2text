@@ -382,11 +382,12 @@ int MsXLSxFetchSheetBarList(ZipHelper &zip,
 }
 
 int MsXLSxFetchSST(ZipHelper &zip, std::vector<std::string> *sst) {
+  sst->clear();
+
   std::string xml;
   if (zip.ReadByName("xl/sharedStrings.xml", &xml) != 0) {
-    return -1;
+    return 0;
   }
-  sst->clear();
 
   const char *si = nullptr;
   size_t si_len = 0;
