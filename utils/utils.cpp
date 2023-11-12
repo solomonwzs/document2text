@@ -26,7 +26,7 @@
 #define _STYLE_Info  "\e[3;32m"
 #define _STYLE_Warn  "\e[3;33m"
 #define _STYLE_Err   "\e[3;31m"
-#define xmlog(_type_, _fmt_, ...)                                     \
+#define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
@@ -36,24 +36,24 @@ template <typename Bytes>
 static int __read_file(const char* filename, Bytes* buff) {
   int fd = open(filename, O_RDONLY);
   if (fd == -1) {
-    xmlog(Err, "open: %s, %s", filename, strerror(errno));
+    slog(Err, "open: %s, %s", filename, strerror(errno));
     return -1;
   }
   _defer([&](...) { close(fd); });
 
   struct stat st;
   if (fstat(fd, &st) != 0) {
-    xmlog(Err, "fstat: %s, %s", filename, strerror(errno));
+    slog(Err, "fstat: %s, %s", filename, strerror(errno));
     return -1;
   }
 
   buff->resize(st.st_size);
   ssize_t n = read(fd, &(*buff)[0], buff->size());
   if (n < 0) {
-    xmlog(Err, "read: %s, %s", filename, strerror(errno));
+    slog(Err, "read: %s, %s", filename, strerror(errno));
     return -1;
   } else if (n != st.st_size) {
-    xmlog(Err, "read size error, except %ld, get %ld", st.st_size, n);
+    slog(Err, "read size error, except %ld, get %ld", st.st_size, n);
     return -1;
   }
   return 0;
@@ -69,7 +69,7 @@ int read_file(const char* filename, std::string* data) {
 
 // =============================================================================
 
-int UTF8String::CountUTF8WordWidth(const char* c, size_t wlen) {
+static inline int count_utf8_word_width(const char* c) {
   if (*c >= 0 && *c <= 127) {
     return 1;
   } else if ((*c & 0xE0) == 0xC0) {
@@ -83,11 +83,11 @@ int UTF8String::CountUTF8WordWidth(const char* c, size_t wlen) {
   }
 }
 
-size_t UTF8String::CountUTF8WordCnt(const char* s, size_t slen) {
+size_t count_utf8_word_cnt(const char* s, size_t slen) {
   const char* p = s;
   size_t len = 0;
   for (size_t i = 0; i < slen;) {
-    int width = CountUTF8WordWidth(p + i, slen - i);
+    int width = count_utf8_word_width(p + i);
     if (width < 0) {
       i += 1;
       len += 1;
@@ -99,14 +99,14 @@ size_t UTF8String::CountUTF8WordCnt(const char* s, size_t slen) {
   return len;
 }
 
-size_t UTF8String::CountUTF8WordCnt(const std::string& str) {
-  return CountUTF8WordCnt(str.c_str(), str.length());
+size_t count_utf8_word_cnt(const std::string& str) {
+  return count_utf8_word_cnt(str.c_str(), str.length());
 }
 
-size_t UTF8String::FixUTF8WordCnt(const char* s, size_t cnt) {
+size_t fix_utf8_word_cnt(const char* s, size_t cnt) {
   size_t offset = 0;
   for (size_t i = 0; i < cnt; ++i) {
-    int w = CountUTF8WordWidth(s + offset);
+    int w = count_utf8_word_width(s + offset);
     offset += w == -1 ? 1 : w;
   }
   return offset;

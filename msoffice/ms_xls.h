@@ -466,8 +466,7 @@ struct RkNumber_t {
   inline uint32_t num() const { return flags >> 2; }
 #undef _nth_bit
 
-  int64_t int_value() const;
-  double float_value() const;
+  double value() const;
 } __attribute__((packed));
 
 struct RkRec_t {
@@ -609,10 +608,11 @@ class MsXLS {
 const std::string &Identifier2Name(uint16_t identifier);
 
 ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
-                         size_t data_len,
+                         size_t data_len, int max_sst_cnt,
                          std::vector<XLUnicodeRichExtendedString> *sst);
 
 ssize_t ReadAndParse1stSubstream(const char *data, size_t data_len,
+                                 int max_sst_cnt,
                                  std::vector<BoundSheet8> *bs_list,
                                  std::vector<XLUnicodeRichExtendedString> *sst);
 

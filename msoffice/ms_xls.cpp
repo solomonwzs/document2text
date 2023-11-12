@@ -14,7 +14,7 @@
 #define _STYLE_Err   "\e[3;31m"
 #define _STYLE_Warn  "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
-#define xmlog(_type_, _fmt_, ...)                                     \
+#define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
@@ -411,42 +411,95 @@ static inline const T *get_ptr_and_move(const char *data, size_t data_len,
   return ptr;
 }
 
-template <typename T>
-static ssize_t get_rgb_data_extend_with_continue(const char *data,
-                                                 size_t offset, size_t char_cnt,
-                                                 size_t *curr_block_end,
-                                                 T *buf) {
-  buf->resize(char_cnt);
-  memcpy(&((*buf)[0]), data + offset, *curr_block_end - offset);
-
-  char *buf_p = &((*buf)[0]) + (*curr_block_end - offset);
-  auto next_rh =
-      reinterpret_cast<const record_header_t *>(data + *curr_block_end);
-  if (next_rh->identifier != kRecord_Continue) {
+static int append_rgb_string(const char *data, size_t curr_block_end,
+                             bool highbyte, size_t *offset, size_t *char_cnt,
+                             std::string *rgb_str) {
+  if (*offset > curr_block_end) {
     return -1;
   }
-  memcpy(buf_p, data + *curr_block_end + sizeof(record_header_t) + 1,
-         buf->size() - (buf_p - buf->data()));
 
-  *curr_block_end += sizeof(record_header_t) + next_rh->size;
-  return char_cnt + 1 + sizeof(record_header_t);
+  size_t dcnt = 0;
+  size_t rsize = curr_block_end - *offset;
+  std::string tmp_str;
+  if (highbyte) {  // char16
+    size_t block_max_cnt = rsize / 2;
+    dcnt = *char_cnt > block_max_cnt ? block_max_cnt : *char_cnt;
+    auto begin = reinterpret_cast<const char16_t *>(data + *offset);
+    if (Utf16ToUtf8(begin, begin + dcnt, &tmp_str) != 0) {
+      return -1;
+    }
+    *offset += dcnt * 2;
+    rgb_str->append(tmp_str);
+  } else {
+    dcnt = *char_cnt > rsize ? rsize : *char_cnt;
+    tmp_str.assign(data + *offset, dcnt);
+    *offset += dcnt;
+    for (auto &ch : tmp_str) {
+      if (ch < 0) {
+        ch = ' ';
+      }
+    }
+    rgb_str->append(tmp_str);
+  }
+  *char_cnt -= dcnt;
+  return 0;
+}
+
+static int append_rgb_string_with_continue(const char *data, size_t data_len,
+                                           size_t char_cnt, size_t *offset,
+                                           size_t *curr_block_end,
+                                           std::string *rgb_str) {
+  for (; char_cnt > 0;) {
+    if (*offset + sizeof(record_header_t) > data_len) {
+      return -1;
+    }
+
+    auto next_rh = reinterpret_cast<const record_header_t *>(data + *offset);
+    if (next_rh->identifier != kRecord_Continue ||
+        *offset + next_rh->size > data_len) {
+      return -1;
+    }
+    *curr_block_end = *offset + sizeof(record_header_t) + next_rh->size;
+    *offset += sizeof(record_header_t);
+
+    uint8_t flags;
+    if (get_val_and_move(data, *curr_block_end, offset, &flags) != 0) {
+      return -1;
+    }
+
+    if (append_rgb_string(data, *curr_block_end, flags & 0x1, offset, &char_cnt,
+                          rgb_str) != 0) {
+      return -1;
+    }
+  }
+  return 0;
 }
 
 ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
-                         size_t data_len,
+                         size_t data_len, int max_sst_cnt,
                          std::vector<XLUnicodeRichExtendedString> *sst) {
+  if (max_sst_cnt <= 0) {
+    max_sst_cnt = std::numeric_limits<int>::max();
+  }
+
+  size_t curr_block_end = rh.size;
+  if (curr_block_end > data_len) {
+    return -1;
+  }
+
   auto csTotal = reinterpret_cast<const int32_t *>(data);
   auto cstUnique = csTotal + 1;
   size_t offset = sizeof(int32_t) * 2;
-  if (offset > data_len) {
+  if (offset > curr_block_end || *csTotal < 0 || *cstUnique < 0) {
+    slog(Err, "csTotal %d, cstUnique %d", *csTotal, *cstUnique);
     return -1;
   }
-  // xmlog(Debug, "csTotal %d, cstUnique %d", *csTotal, *cstUnique);
+  // slog(Debug, "csTotal %d, cstUnique %d", *csTotal, *cstUnique);
 
-  size_t curr_block_end = rh.size;
+  int sst_size = std::min(max_sst_cnt, *cstUnique);
   std::vector<char> tmp_buf;
-  sst->reserve(*cstUnique);
-  for (int i = 0; i < *cstUnique; ++i) {
+  sst->reserve(sst_size);
+  for (int i = 0; i < sst_size; ++i) {
     if (offset == curr_block_end) {
       auto next_rh = get_ptr_and_move<record_header_t>(data, data_len, &offset);
       if (next_rh == nullptr || next_rh->identifier != kRecord_Continue) {
@@ -457,7 +510,6 @@ ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
 
     XLUnicodeRichExtendedString s;
     ssize_t ofs = s.ReadAndParse(data, data_len, offset, &curr_block_end);
-    // xmlog(Debug, "%s", s.String().c_str());
     if (ofs < 0) {
       return -1;
     }
@@ -465,11 +517,12 @@ ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
     sst->push_back(std::move(s));
   }
 
-  return offset;
+  return max_sst_cnt >= *cstUnique ? offset : curr_block_end;
 }
 
 ssize_t ReadAndParse1stSubstream(
-    const char *data, size_t data_len, std::vector<BoundSheet8> *bs,
+    const char *data, size_t data_len, int max_sst_cnt,
+    std::vector<BoundSheet8> *bs,
     std::vector<XLUnicodeRichExtendedString> *sst) {
   size_t offset = 0;
   auto bof_rh = get_ptr_and_move<record_header_t>(data, data_len, &offset);
@@ -487,14 +540,14 @@ ssize_t ReadAndParse1stSubstream(
     if (rh == nullptr) {
       return -1;
     }
-    // xmlog(Info, "%s, size %d", Identifier2Name(rh->identifier).c_str(),
+    // slog(Info, "%s, size %d", Identifier2Name(rh->identifier).c_str(),
     //       rh->size);
 
     if (rh->identifier == kRecord_EOF) {
       return offset;
     } else if (rh->identifier == kRecord_SST) {
-      ssize_t ofs =
-          FetchTextFromSST(*rh, data + offset, data_len - offset, sst);
+      ssize_t ofs = FetchTextFromSST(*rh, data + offset, data_len - offset,
+                                     max_sst_cnt, sst);
       if (ofs < 0) {
         return -1;
       }
@@ -506,6 +559,9 @@ ssize_t ReadAndParse1stSubstream(
         return -1;
       }
       bs->push_back(std::move(b));
+    } else if (rh->identifier == kRecord_FilePass) {
+      slog(Err, "file was encrypted");
+      return -1;
     }
 
     offset += rh->size;
@@ -539,51 +595,21 @@ ssize_t XLUnicodeRichExtendedString::ReadAndParse(const char *data,
       return -1;
     }
   }
-  // xmlog(Debug, "offset %ld, cRun %d, cbExtRst %d, hb %d", ofs, cRun,
+  // slog(Debug, "offset %ld, cRun %d, cbExtRst %d, hb %d", ofs, cRun,
   //       cbExtRst, m_hdr.fHighByte());
 
   // rgb
-  ssize_t sl;
-  if (m_hdr.fHighByte() == 0) {
-    if (ofs + m_hdr.cch > *curr_block_end) {
-      sl = get_rgb_data_extend_with_continue(data, ofs, m_hdr.cch,
-                                             curr_block_end, &m_str);
-      if (sl == -1) {
-        return -1;
-      }
-    } else {
-      m_str.assign(data + ofs, m_hdr.cch);
-      sl = m_hdr.cch;
-    }
-    for (auto &ch : m_str) {
-      if (ch < 0) {
-        ch = ' ';
-      }
-    }
-  } else {
-    std::vector<char> tmp_buf;
-    const char16_t *begin;
-    const char16_t *end;
-    if (ofs + m_hdr.cch * 2 > *curr_block_end) {
-      sl = get_rgb_data_extend_with_continue(data, ofs, m_hdr.cch * 2,
-                                             curr_block_end, &tmp_buf);
-      if (sl == -1) {
-        return -1;
-      }
-      begin = reinterpret_cast<const char16_t *>(tmp_buf.data());
-      end = begin + m_hdr.cch;
-    } else {
-      begin = reinterpret_cast<const char16_t *>(data + ofs);
-      end = begin + m_hdr.cch;
-      sl = m_hdr.cch * 2;
-    }
-    if (Utf16ToUtf8(begin, end, &m_str) != 0) {
+  size_t char_cnt = m_hdr.cch;
+  if (append_rgb_string(data, *curr_block_end, m_hdr.fHighByte(), &ofs,
+                        &char_cnt, &m_str) != 0) {
+    return -1;
+  }
+  if (char_cnt > 0) {
+    if (append_rgb_string_with_continue(data, data_len, char_cnt, &ofs,
+                                        curr_block_end, &m_str) != 0) {
       return -1;
     }
   }
-  // sst->push_back(std::move(s));
-  ofs += sl;
-  // xmlog(Err, "%s", text->back().c_str());
 
   // rgRun (optional)
   if (m_hdr.fRichSt() == 0x1) {
@@ -598,25 +624,18 @@ ssize_t XLUnicodeRichExtendedString::ReadAndParse(const char *data,
   return ofs - offset;
 }
 
-int64_t RkNumber_t::int_value() const {
-  if (fInt() == 0) {
-    return 0;
-  }
-
-  uint32_t n = num();
-  auto val = reinterpret_cast<int *>(&n);
-  return fX100() ? *val * 100 : *val;
-}
-
-double RkNumber_t::float_value() const {
+double RkNumber_t::value() const {
   if (fInt() == 1) {
-    return 0.0;
-  }
+    uint32_t n = num();
+    auto val = reinterpret_cast<int *>(&n);
+    return fX100() ? *val / 100.0 : *val;
 
-  uint64_t n = num();
-  n <<= 34;
-  auto val = reinterpret_cast<double *>(&n);
-  return fX100() ? *val * 100 : *val;
+  } else {
+    uint64_t n = num();
+    n <<= 34;
+    auto val = reinterpret_cast<double *>(&n);
+    return fX100() ? *val / 100 : *val;
+  }
 }
 
 int MulRk::ParseFrom(const char *data, size_t data_len) {
@@ -803,8 +822,8 @@ static int append_cell(const char *str, size_t str_cch, const char *delimiter,
 
   if (cell_col != 0) {
     if (*max_fetch_text_len < delimiter_cch) {
-      text->append(delimiter, utils::UTF8String::FixUTF8WordCnt(
-                                  delimiter, *max_fetch_text_len));
+      text->append(delimiter,
+                   utils::fix_utf8_word_cnt(delimiter, *max_fetch_text_len));
       *max_fetch_text_len = 0;
       return 1;
     } else {
@@ -818,8 +837,7 @@ static int append_cell(const char *str, size_t str_cch, const char *delimiter,
   }
 
   if (*max_fetch_text_len < str_cch) {
-    text->append(str,
-                 utils::UTF8String::FixUTF8WordCnt(str, *max_fetch_text_len));
+    text->append(str, utils::fix_utf8_word_cnt(str, *max_fetch_text_len));
     *max_fetch_text_len = 0;
     return 1;
   } else {
@@ -839,19 +857,14 @@ static void to_string(double f, std::vector<char> *buf) {
 }
 
 static void to_string(const RkNumber_t &rk, std::vector<char> *buf) {
-  if (rk.fInt() == 1) {
-    snprintf(buf->data(), buf->size(), "%ld", rk.int_value());
-  } else {
-    to_string(rk.float_value(), buf);
-  }
+  snprintf(buf->data(), buf->size(), "%.2f", rk.value());
 }
 
 int MsXLS::FetchText(const fetch_text_options_t *user_opts,
                      std::string *text) const {
   static const fetch_text_options_t default_opts;
   fetch_text_options_t opts = user_opts != nullptr ? *user_opts : default_opts;
-  size_t delimiter_cch =
-      utils::UTF8String::CountUTF8WordCnt(opts.xls_delimiter);
+  size_t delimiter_cch = utils::count_utf8_word_cnt(opts.xls_delimiter);
 
   std::vector<char> workbook_stream;
   if (m_comp_doc.GetDirEntryStream(m_comp_doc.GetDirEntries()[m_idx_workbook],
@@ -863,7 +876,8 @@ int MsXLS::FetchText(const fetch_text_options_t *user_opts,
 
   std::vector<BoundSheet8> bs_list;
   std::vector<XLUnicodeRichExtendedString> sst;
-  if (ReadAndParse1stSubstream(data, data_len, &bs_list, &sst) < 0) {
+  if (ReadAndParse1stSubstream(data, data_len, opts.xls_max_sst_cnt, &bs_list,
+                               &sst) < 0) {
     return -1;
   }
 
@@ -880,7 +894,7 @@ int MsXLS::FetchText(const fetch_text_options_t *user_opts,
 
     if (opts.max_fetch_text_len < bs.Name().Cch()) {
       auto &name = bs.Name().String();
-      text->append(name.c_str(), utils::UTF8String::FixUTF8WordCnt(
+      text->append(name.c_str(), utils::fix_utf8_word_cnt(
                                      name.c_str(), opts.max_fetch_text_len));
       opts.max_fetch_text_len = 0;
     } else {
@@ -927,12 +941,15 @@ int MsXLS::FetchText(const fetch_text_options_t *user_opts,
         break;
       } else if (rh->identifier == kRecord_LabelSst) {
         _get_ptr(lab, LabelSst_t);
-        if (lab->isst >= sst.size()) {
-          return -1;
+        const char *sst_txt = "_";
+        uint16_t sst_txt_cch = 1;
+        if (lab->isst < sst.size()) {
+          sst_txt = sst[lab->isst].String().c_str();
+          sst_txt_cch = sst[lab->isst].Hdr().cch;
         }
-        append_cell(sst[lab->isst].String().c_str(), sst[lab->isst].Hdr().cch,
-                    opts.xls_delimiter.c_str(), delimiter_cch, lab->cell.rw,
-                    lab->cell.col, &row, &opts.max_fetch_text_len, text);
+        append_cell(sst_txt, sst_txt_cch, opts.xls_delimiter.c_str(),
+                    delimiter_cch, lab->cell.rw, lab->cell.col, &row,
+                    &opts.max_fetch_text_len, text);
 
       } else if (rh->identifier == kRecord_RK) {
         _get_ptr(rk, RK_t);

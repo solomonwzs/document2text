@@ -22,9 +22,16 @@ enum document_type_t {
   kDocTypeXLSX = 7,
 };
 
+enum doc2txt_result_t {
+  kDoc2txtOK = 0,
+  kDoc2txtFail = -1,
+  kDoc2txtConvertErr = -2,
+};
+
 struct fetch_opts_t {
   size_t max_fetch_text_len;
   int max_fetch_pdf_page_cnt;
+  int max_xls_sst_cnt;
   document_type_t type;
 };
 
@@ -36,37 +43,45 @@ static inline bool is_zip(const char *p, size_t plen) {
   return plen > 30 && *reinterpret_cast<const uint32_t *>(p) == 0x04034b50;
 }
 
-static int pdf2text(const char *data, size_t len, size_t max_fetch_text_len,
-                    int max_fetch_pdf_page_cnt, std::string *text) {
+static doc2txt_result_t pdf2text(const char *data, size_t len,
+                                 size_t max_fetch_text_len,
+                                 int max_fetch_pdf_page_cnt,
+                                 std::string *text) {
   simplepdf::SimplePDF pdf(data, len);
   int page_cnt = pdf.PagesCnt();
   for (int i = 1;
        i <= page_cnt && i <= max_fetch_pdf_page_cnt && max_fetch_text_len > 0;
        ++i) {
-    auto t = pdf.PageText(i);
-    if (t == nullptr || t->c_str() == nullptr) {
-      continue;
-    }
+    try {
+      auto t = pdf.PageText(i);
+      if (t == nullptr || t->c_str() == nullptr) {
+        continue;
+      }
 
-    size_t len =
-        utils::UTF8String::CountUTF8WordCnt(t->c_str(), t->getLength());
-    if (max_fetch_text_len >= len) {
-      text->append(t->c_str(), t->getLength());
-      max_fetch_text_len -= len;
-    } else {
-      size_t offset =
-          utils::UTF8String::FixUTF8WordCnt(t->c_str(), max_fetch_text_len);
-      text->append(t->c_str(), offset);
-      max_fetch_text_len = 0;
+      size_t len = utils::count_utf8_word_cnt(t->c_str(), t->getLength());
+      if (max_fetch_text_len >= len) {
+        text->append(t->c_str(), t->getLength());
+        max_fetch_text_len -= len;
+      } else {
+        size_t offset =
+            utils::fix_utf8_word_cnt(t->c_str(), max_fetch_text_len);
+        text->append(t->c_str(), offset);
+        max_fetch_text_len = 0;
+      }
+    } catch (std::exception &ex) {
     }
   }
-  return 0;
+  return kDoc2txtOK;
 }
 
-static int document2text(const char *data, size_t len, const fetch_opts_t &opts,
-                         std::string *text) {
+doc2txt_result_t document2text(const char *data, size_t len,
+                               const fetch_opts_t &opts, std::string *text,
+                               document_type_t *type) {
+  *type = kDocTypeUnknown;
+
   if (opts.type == kDocTypePDF ||
       (opts.type == kDocTypeUnknown && is_document_pdf(data, len))) {
+    *type = kDocTypePDF;
     return pdf2text(data, len, opts.max_fetch_text_len,
                     opts.max_fetch_pdf_page_cnt, text);
   }
@@ -74,50 +89,51 @@ static int document2text(const char *data, size_t len, const fetch_opts_t &opts,
   if (is_zip(data, len)) {
     msoffice::officex::ZipHelper zip;
     if (zip.OpenFromBytes(data, len) != 0) {
-      return -1;
+      return kDoc2txtFail;
     }
 
-    document_type_t type = opts.type;
-    if (type == kDocTypeUnknown) {
+    *type = opts.type;
+    if (*type == kDocTypeUnknown) {
       auto n2i = zip.GetName2Idx();
       if (n2i.find("word/document.xml") != n2i.end()) {
-        type = kDocTypeDOCX;
+        *type = kDocTypeDOCX;
       } else if (n2i.find("ppt/presentation.xml") != n2i.end()) {
-        type = kDocTypePPTX;
+        *type = kDocTypePPTX;
       } else if (n2i.find("xl/workbook.xml") != n2i.end()) {
-        type = kDocTypeXLSX;
+        *type = kDocTypeXLSX;
       } else {
-        return -1;
+        return kDoc2txtFail;
       }
     }
 
-    if (type == kDocTypeDOCX) {
+    if (*type == kDocTypeDOCX) {
       return msoffice::officex::MsDOCxFetchText(zip, opts.max_fetch_text_len,
                                                 text) == 0
-                 ? 0
-                 : -1;
-    } else if (type == kDocTypePPTX) {
+                 ? kDoc2txtOK
+                 : kDoc2txtConvertErr;
+    } else if (*type == kDocTypePPTX) {
       return msoffice::officex::MsPPTxFetchText(zip, opts.max_fetch_text_len,
                                                 text) == 0
-                 ? 0
-                 : -1;
-    } else if (type == kDocTypeXLSX) {
+                 ? kDoc2txtOK
+                 : kDoc2txtConvertErr;
+    } else if (*type == kDocTypeXLSX) {
       return msoffice::officex::MsXLSxFetchText(zip, opts.max_fetch_text_len,
-                                                ",", text) == 0
-                 ? 0
-                 : -1;
+                                                opts.max_xls_sst_cnt, ",",
+                                                text) == 0
+                 ? kDoc2txtOK
+                 : kDoc2txtConvertErr;
     } else {
-      return -1;
+      return kDoc2txtFail;
     }
   }
 
   msoffice::CompoundDocument comp_doc;
   if (comp_doc.ParseFromBytes(data, len) != 0) {
-    return -1;
+    return kDoc2txtFail;
   }
 
-  document_type_t type = opts.type;
-  if (type == kDocTypeUnknown) {
+  *type = opts.type;
+  if (*type == kDocTypeUnknown) {
     for (auto &i : comp_doc.GetDirEntries()) {
       std::string dirname;
       if (i.type == msoffice::kDirEntryTypeEmpty ||
@@ -127,13 +143,13 @@ static int document2text(const char *data, size_t len, const fetch_opts_t &opts,
         continue;
       }
       if (dirname == "WordDocument") {
-        type = kDocTypeDOC;
+        *type = kDocTypeDOC;
         break;
       } else if (dirname == "PowerPoint Document") {
-        type = kDocTypePPT;
+        *type = kDocTypePPT;
         break;
       } else if (dirname == "Workbook") {
-        type = kDocTypeXLS;
+        *type = kDocTypeXLS;
         break;
       }
     }
@@ -144,29 +160,30 @@ static int document2text(const char *data, size_t len, const fetch_opts_t &opts,
   fopts.fetch_text_from_drawing = true;
   fopts.xls_delimiter = ",";
   fopts.xls_skip_blank_cell = true;
+  fopts.xls_max_sst_cnt = opts.max_xls_sst_cnt;
 
-  if (type == kDocTypeDOC) {
+  if (*type == kDocTypeDOC) {
     msoffice::doc::MsDOC doc;
     if (doc.ParseFromCompoundDocument(std::move(comp_doc)) != 0 ||
         doc.FetchText(&fopts, text) != 0) {
-      return -1;
+      return kDoc2txtConvertErr;
     }
-  } else if (type == kDocTypePPT) {
+  } else if (*type == kDocTypePPT) {
     msoffice::ppt::MsPPT ppt;
     if (ppt.ParseFromCompoundDocument(std::move(comp_doc)) != 0 ||
         ppt.FetchText(&fopts, text) != 0) {
-      return -1;
+      return kDoc2txtConvertErr;
     }
-  } else if (type == kDocTypeXLS) {
+  } else if (*type == kDocTypeXLS) {
     msoffice::xls::MsXLS xls;
     if (xls.ParseFromCompoundDocument(std::move(comp_doc)) != 0 ||
         xls.FetchText(&fopts, text) != 0) {
-      return -1;
+      return kDoc2txtConvertErr;
     }
   } else {
-    return -1;
+    return kDoc2txtFail;
   }
-  return 0;
+  return kDoc2txtOK;
 }
 
 int main(int argc, char **argv) {
@@ -182,7 +199,8 @@ int main(int argc, char **argv) {
       .max_fetch_pdf_page_cnt = 20,
   };
   std::string text;
-  assert(document2text(data.data(), data.size(), opts, &text) == 0);
+  document_type_t type;
+  assert(document2text(data.data(), data.size(), opts, &text, &type) == 0);
   printf("%s", text.c_str());
   return 0;
 }

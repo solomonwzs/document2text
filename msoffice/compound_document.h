@@ -7,14 +7,6 @@
 #include <string>
 #include <vector>
 
-#define _STYLE_Info  "\e[3;32m"
-#define _STYLE_Err   "\e[3;31m"
-#define _STYLE_Warn  "\e[3;33m"
-#define _STYLE_Debug "\e[3;36m"
-#define xmlog(_type_, _fmt_, ...)                                     \
-  printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
-         __FILE__, __func__, __LINE__, ##__VA_ARGS__)
-
 namespace msoffice {
 
 template <typename T>
@@ -30,6 +22,7 @@ struct fetch_text_options_t {
   bool fetch_text_from_drawing = false;
   std::string xls_delimiter = ",";
   bool xls_skip_blank_cell = true;
+  int xls_max_sst_cnt = 0xffff;
 };
 
 enum spec_sect_id_t {
@@ -95,7 +88,6 @@ class CompoundDocument {
   using SectorAllocTable = std::vector<int32_t>;
 
   using StreamSecIdChain = std::vector<int32_t>;
-  using StreamSecIdChainTable = std::map<int32_t, StreamSecIdChain>;
 
   int ParseFromFile(const std::string& filename);
   int ParseFromBytes(const char* data, size_t data_len);
@@ -116,28 +108,15 @@ class CompoundDocument {
       return -1;
     }
 
-    if (get_stream_sec_id_chains(this->m_sat, &this->m_stream_sec_id_chains) !=
-        0) {
+    if (get_short_sector_alloc_table(data, this->m_sat, &this->m_ssat) != 0) {
       return -1;
     }
 
-    if (get_short_sector_alloc_table(data, this->m_stream_sec_id_chains,
-                                     &this->m_ssat) != 0) {
+    if (get_directory_entries(data, this->m_sat, &this->m_dir_entries) != 0) {
       return -1;
     }
 
-    if (get_stream_sec_id_chains(this->m_ssat,
-                                 &this->m_short_stream_sec_id_chains) != 0) {
-      return -1;
-    }
-
-    if (get_directory_entries(data, this->m_stream_sec_id_chains,
-                              &this->m_dir_entries) != 0) {
-      return -1;
-    }
-
-    if (get_short_stream_data(data, this->m_stream_sec_id_chains,
-                              this->m_dir_entries,
+    if (get_short_stream_data(data, this->m_sat, this->m_dir_entries,
                               &this->m_short_stream_data) != 0) {
       return -1;
     }
@@ -155,14 +134,6 @@ class CompoundDocument {
   inline const SectorAllocTable& GetSAT() const { return m_sat; }
 
   inline const SectorAllocTable& GetSSAT() const { return m_ssat; }
-
-  inline const StreamSecIdChainTable& GetStreamSecIdChain() const {
-    return m_stream_sec_id_chains;
-  }
-
-  inline const StreamSecIdChainTable& GetShortStreamSecIdChain() const {
-    return m_short_stream_sec_id_chains;
-  }
 
   inline const std::vector<directory_entry_t> GetDirEntries() const {
     return m_dir_entries;
@@ -187,7 +158,7 @@ class CompoundDocument {
   using get_sec_ids_t = int (CompoundDocument::*)(int32_t, const char**,
                                                   size_t*) const;
 
-  int get_stream(int32_t first_sec_id, const StreamSecIdChainTable& tab,
+  int get_stream(int32_t first_sec_id, const SectorAllocTable& xsat,
                  get_sec_ids_t func, std::vector<char>* stream) const;
 
   static int get_master_sector_alloc_table(const std::vector<char>& data,
@@ -197,10 +168,9 @@ class CompoundDocument {
                                     const SectorAllocTable& msat,
                                     SectorAllocTable* sat);
 
-  static int get_short_sector_alloc_table(
-      const std::vector<char>& data,
-      const StreamSecIdChainTable& stream_sec_id_chains,
-      SectorAllocTable* ssat);
+  static int get_short_sector_alloc_table(const std::vector<char>& data,
+                                          const SectorAllocTable& sat,
+                                          SectorAllocTable* ssat);
 
   static int get_sector(const std::vector<char>& data, int32_t sec_id,
                         const char** p, size_t* size);
@@ -210,19 +180,18 @@ class CompoundDocument {
                                      int32_t sec_id, const char** p,
                                      size_t* size);
 
-  static int get_stream_sec_id_chains(
-      const SectorAllocTable& sat, StreamSecIdChainTable* strem_sec_id_chains);
-
-  static int get_directory_entries(
-      const std::vector<char>& data,
-      const StreamSecIdChainTable& stream_sec_id_chains,
-      std::vector<directory_entry_t>* dir_entries);
+  static int get_directory_entries(const std::vector<char>& data,
+                                   const SectorAllocTable& sat,
+                                   std::vector<directory_entry_t>* dir_entries);
 
   static int get_short_stream_data(
-      const std::vector<char>& data,
-      const StreamSecIdChainTable& stream_sec_id_chains,
+      const std::vector<char>& data, const SectorAllocTable& ssat,
       const std::vector<directory_entry_t>& dir_entries,
       std::vector<char>* short_stream_data);
+
+  static int get_sec_ids_chain(int32_t first_xsec_id,
+                               const SectorAllocTable& xsat,
+                               std::vector<int32_t>* chain);
 
  private:
   std::vector<char> m_data;
@@ -230,8 +199,6 @@ class CompoundDocument {
   SectorAllocTable m_msat;
   SectorAllocTable m_sat;
   SectorAllocTable m_ssat;
-  StreamSecIdChainTable m_stream_sec_id_chains;
-  StreamSecIdChainTable m_short_stream_sec_id_chains;
   std::vector<directory_entry_t> m_dir_entries;
 };
 
@@ -247,5 +214,3 @@ void RemoveControlCharacter(std::string* text);
 int Utf16ToUtf8(const char16_t* begin, const char16_t* end, std::string* u8);
 
 }  // namespace msoffice
-
-#undef xmlog

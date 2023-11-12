@@ -51,8 +51,9 @@ struct xlsx_sheet_bar_t {
 
 int MsXLSxFetchSheetBarList(ZipHelper &zip,
                             std::vector<xlsx_sheet_bar_t> *sheets);
-int MsXLSxFetchSST(ZipHelper &zip, std::vector<std::string> *sst);
-int MsXLSxFetchText(ZipHelper &zip, size_t max_len,
+int MsXLSxFetchSST(ZipHelper &zip, int max_sst_cnt,
+                   std::vector<std::string> *sst);
+int MsXLSxFetchText(ZipHelper &zip, size_t max_len, int max_sst_cnt,
                     const std::string &delimiter, std::string *text);
 
 }  // namespace officex

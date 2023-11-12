@@ -16,7 +16,7 @@
 #define _STYLE_Err   "\e[3;31m"
 #define _STYLE_Warn  "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
-#define xmlog(_type_, _fmt_, ...)                                     \
+#define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
@@ -144,11 +144,11 @@ int CompoundDocument::get_sector(const std::vector<char> &data, int32_t sec_id,
   *size = 1ul << hdr->ssz;
 
   size_t pos = 512ul + static_cast<size_t>(sec_id) * *size;
-  if (*size > data.size()) {
+  if (pos >= data.size()) {
     return -1;
   }
   *p = data.data() + pos;
-  if (pos > data.size() - *size) {
+  if (pos + *size > data.size()) {
     *size = data.size() - pos;
   }
   return 0;
@@ -162,59 +162,28 @@ int CompoundDocument::get_short_stream_sector(
 
   size_t pos = static_cast<size_t>(sec_id) * *size;
   if (*size > short_stream_data.size() ||
-      pos > short_stream_data.size() - *size) {
+      pos + *size > short_stream_data.size()) {
     return -1;
   }
   *p = short_stream_data.data() + pos;
   return 0;
 }
 
-int CompoundDocument::get_stream_sec_id_chains(
-    const SectorAllocTable &sat, StreamSecIdChainTable *stream_sec_id_chains) {
-  int cnt = sat.size();
-  SectorAllocTable pre_sat(cnt, kFreeSecID);
-  for (int32_t sec_id = 0; sec_id < cnt; ++sec_id) {
-    int32_t next_sec_id = sat[sec_id];
-    if (next_sec_id >= cnt) {
-      return -1;
-    }
-    if (next_sec_id >= 0) {
-      pre_sat[next_sec_id] = sec_id;
-    }
-  }
-
-  for (int32_t sec_id = 0; sec_id < sat.size(); ++sec_id) {
-    if ((sat[sec_id] >= 0 || sat[sec_id] == kEndOfChainSecID) &&
-        pre_sat[sec_id] == kFreeSecID) {
-      StreamSecIdChain chain;
-      for (int32_t next_sec_id = sec_id; next_sec_id != kEndOfChainSecID;) {
-        chain.push_back(next_sec_id);
-        next_sec_id = sat[next_sec_id];
-      }
-      if (!chain.empty()) {
-        stream_sec_id_chains->insert({chain.front(), std::move(chain)});
-      }
-    }
-  }
-
-  return 0;
-}
-
 int CompoundDocument::get_short_sector_alloc_table(
-    const std::vector<char> &data,
-    const StreamSecIdChainTable &stream_sec_id_chains, SectorAllocTable *ssat) {
+    const std::vector<char> &data, const SectorAllocTable &sat,
+    SectorAllocTable *ssat) {
   auto hdr = reinterpret_cast<const compound_doc_header_t *>(data.data());
   if (hdr->sec_id_of_1st_sect_of_ss_alloc_table < 0) {
     return 0;
   }
 
-  auto it =
-      stream_sec_id_chains.find(hdr->sec_id_of_1st_sect_of_ss_alloc_table);
-  if (it == stream_sec_id_chains.end()) {
+  std::vector<int32_t> chain;
+  if (get_sec_ids_chain(hdr->sec_id_of_1st_sect_of_ss_alloc_table, sat,
+                        &chain) != 0) {
     return -1;
   }
 
-  for (int32_t sec_id : it->second) {
+  for (int32_t sec_id : chain) {
     const char *sec_p;
     size_t size;
     if (get_sector(data, sec_id, &sec_p, &size) != 0) {
@@ -232,16 +201,16 @@ int CompoundDocument::get_short_sector_alloc_table(
 }
 
 int CompoundDocument::get_directory_entries(
-    const std::vector<char> &data,
-    const StreamSecIdChainTable &stream_sec_id_chains,
+    const std::vector<char> &data, const SectorAllocTable &sat,
     std::vector<directory_entry_t> *dir_entries) {
   auto hdr = reinterpret_cast<const compound_doc_header_t *>(data.data());
-  auto it = stream_sec_id_chains.find(hdr->sec_id_of_1st_sect_of_dir_stream);
-  if (it == stream_sec_id_chains.end()) {
+  std::vector<int32_t> chain;
+  if (get_sec_ids_chain(hdr->sec_id_of_1st_sect_of_dir_stream, sat, &chain) !=
+      0) {
     return -1;
   }
 
-  for (int32_t sec_id : it->second) {
+  for (int32_t sec_id : chain) {
     const char *sec_p;
     size_t size;
     if (get_sector(data, sec_id, &sec_p, &size) != 0) {
@@ -259,8 +228,7 @@ int CompoundDocument::get_directory_entries(
 }
 
 int CompoundDocument::get_short_stream_data(
-    const std::vector<char> &data,
-    const StreamSecIdChainTable &stream_sec_id_chains,
+    const std::vector<char> &data, const SectorAllocTable &ssat,
     const std::vector<directory_entry_t> &dir_entries,
     std::vector<char> *short_stream_data) {
   int32_t first_short_sec_id = kFreeSecID;
@@ -277,16 +245,16 @@ int CompoundDocument::get_short_stream_data(
     return 0;
   }
 
-  auto it = stream_sec_id_chains.find(first_short_sec_id);
-  if (it == stream_sec_id_chains.end()) {
+  std::vector<int32_t> chain;
+  if (get_sec_ids_chain(first_short_sec_id, ssat, &chain) != 0) {
     return -1;
   }
 
   auto hdr = reinterpret_cast<const compound_doc_header_t *>(data.data());
   size_t sec_size = 1ul << hdr->ssz;
-  short_stream_data->resize(sec_size * it->second.size());
+  short_stream_data->resize(sec_size * chain.size());
   char *p = short_stream_data->data();
-  for (int32_t sec_id : it->second) {
+  for (int32_t sec_id : chain) {
     const char *sec_p;
     size_t size;
     if (get_sector(data, sec_id, &sec_p, &size) != 0) {
@@ -300,18 +268,18 @@ int CompoundDocument::get_short_stream_data(
 }
 
 int CompoundDocument::get_stream(int32_t first_sec_id,
-                                 const StreamSecIdChainTable &tab,
+                                 const SectorAllocTable &xsat,
                                  get_sec_ids_t func,
                                  std::vector<char> *stream) const {
-  auto it = tab.find(first_sec_id);
-  if (it == tab.end()) {
+  std::vector<int32_t> chain;
+  if (get_sec_ids_chain(first_sec_id, xsat, &chain) != 0) {
     return -1;
   }
 
   char *p = stream->data();
   size_t plen = stream->size();
 
-  for (auto sec_id : it->second) {
+  for (auto sec_id : chain) {
     const char *sec_p;
     size_t size;
     if ((this->*func)(sec_id, &sec_p, &size) != 0) {
@@ -326,6 +294,23 @@ int CompoundDocument::get_stream(int32_t first_sec_id,
   return 0;
 }
 
+int CompoundDocument::get_sec_ids_chain(int32_t first_xsec_id,
+                                        const SectorAllocTable &xsat,
+                                        std::vector<int32_t> *chain) {
+  for (int32_t sec_id = first_xsec_id; sec_id != kEndOfChainSecID;
+       sec_id = xsat[chain->back()]) {
+    if (sec_id < 0 || sec_id >= xsat.size()) {
+      return -1;
+    }
+
+    chain->push_back(sec_id);
+    if (chain->size() > xsat.size()) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 int CompoundDocument::GetDirEntryStream(const directory_entry_t &dir_entry,
                                         std::vector<char> *stream) const {
   if (dir_entry.sec_id_of_1st_x < 0) {
@@ -334,14 +319,13 @@ int CompoundDocument::GetDirEntryStream(const directory_entry_t &dir_entry,
 
   auto hdr = reinterpret_cast<const compound_doc_header_t *>(m_data.data());
   stream->resize(dir_entry.size_of_x);
-  return get_stream(dir_entry.sec_id_of_1st_x,
-                    dir_entry.size_of_x < hdr->min_size_of_std_stream
-                        ? m_short_stream_sec_id_chains
-                        : m_stream_sec_id_chains,
-                    dir_entry.size_of_x < hdr->min_size_of_std_stream
-                        ? &CompoundDocument::GetShortStreamSector
-                        : &CompoundDocument::GetSector,
-                    stream);
+  return get_stream(
+      dir_entry.sec_id_of_1st_x,
+      dir_entry.size_of_x < hdr->min_size_of_std_stream ? m_ssat : m_sat,
+      dir_entry.size_of_x < hdr->min_size_of_std_stream
+          ? &CompoundDocument::GetShortStreamSector
+          : &CompoundDocument::GetSector,
+      stream);
 }
 
 // =============================================================================
@@ -362,7 +346,7 @@ int Utf16ToUtf8(const char16_t *begin, const char16_t *end, std::string *u8) {
     *u8 = convert.to_bytes(begin, end);
     return 0;
   } catch (const std::exception &e) {
-    xmlog(Err, "u16_to_u8 err, %s", e.what());
+    slog(Err, "u16_to_u8 err, %s", e.what());
     return -1;
   }
 }

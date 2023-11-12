@@ -13,7 +13,7 @@
 #define _STYLE_Err   "\e[3;31m"
 #define _STYLE_Warn  "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
-#define xmlog(_type_, _fmt_, ...)                                     \
+#define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
@@ -60,13 +60,13 @@ int ZipHelper::OpenFromBytes(const char *data, size_t data_len) {
 
   zsrc = zip_source_buffer_create(data, data_len, 0, &zerr);
   if (zsrc == nullptr) {
-    xmlog(Err, "%s", zip_error_strerror(&zerr));
+    slog(Err, "%s", zip_error_strerror(&zerr));
     zip_error_fini(&zerr);
     return -1;
   }
 
   if (zip_source_open(zsrc) != 0) {
-    xmlog(Err, "zip_source_open fail");
+    slog(Err, "zip_source_open fail");
     goto _ERR_HAS_BUF_CREATE;
   }
 
@@ -74,7 +74,7 @@ int ZipHelper::OpenFromBytes(const char *data, size_t data_len) {
 
   zfd = zip_open_from_source(zsrc, ZIP_RDONLY, &zerr);
   if (zfd == nullptr) {
-    xmlog(Err, "%s", zip_error_strerror(&zerr));
+    slog(Err, "%s", zip_error_strerror(&zerr));
     zip_error_fini(&zerr);
     goto _ERR_HAS_SRC_OPEN;
   }
@@ -213,7 +213,7 @@ static void append_text(std::string *text, size_t *max_len, const char *s,
     text->append(s, len);
     *max_len -= wcnt;
   } else {
-    size_t offset = utils::UTF8String::FixUTF8WordCnt(s, *max_len);
+    size_t offset = utils::fix_utf8_word_cnt(s, *max_len);
     text->append(s, offset);
     *max_len = 0;
   }
@@ -221,7 +221,7 @@ static void append_text(std::string *text, size_t *max_len, const char *s,
 
 static inline void append_text(std::string *text, size_t *max_len,
                                const char *s, size_t len) {
-  size_t wcnt = utils::UTF8String::CountUTF8WordCnt(s, len);
+  size_t wcnt = utils::count_utf8_word_cnt(s, len);
   return append_text(text, max_len, s, len, wcnt);
 }
 
@@ -373,15 +373,18 @@ int MsXLSxFetchSheetBarList(ZipHelper &zip,
        f = find_tag(sht + sht_len, "<sheet", &sht, &sht_len)) {
     xlsx_sheet_bar_t s;
     if (get_attr_value(sht, sht_len, "sheetId=", &s.id) &&
-        get_attr_value(sht, sht_len, "name=", &s.name) &&
-        get_attr_value(sht, sht_len, "state=", &s.state)) {
+        get_attr_value(sht, sht_len, "name=", &s.name)) {
+      if (!get_attr_value(sht, sht_len, "state=", &s.state)) {
+        s.state = "visible";
+      }
       sheets->push_back(std::move(s));
     }
   }
   return 0;
 }
 
-int MsXLSxFetchSST(ZipHelper &zip, std::vector<std::string> *sst) {
+int MsXLSxFetchSST(ZipHelper &zip, int max_sst_cnt,
+                   std::vector<std::string> *sst) {
   sst->clear();
 
   std::string xml;
@@ -389,9 +392,14 @@ int MsXLSxFetchSST(ZipHelper &zip, std::vector<std::string> *sst) {
     return 0;
   }
 
+  if (max_sst_cnt <= 0) {
+    max_sst_cnt = std::numeric_limits<int>::max();
+  }
+
   const char *si = nullptr;
   size_t si_len = 0;
-  for (bool f = find_tag(xml.c_str(), "<si", &si, &si_len); f;
+  for (bool f = find_tag(xml.c_str(), "<si", &si, &si_len);
+       f && sst->size() < max_sst_cnt;
        f = find_tag(si + si_len, "<si", &si, &si_len)) {
     const char *si_end = nullptr;
     size_t si_end_len = 0;
@@ -417,7 +425,7 @@ int ms_xlsx_fetch_text(const char *xml, size_t xml_len,
                        const std::vector<std::string> &sst,
                        const std::string &delimiter, size_t *max_len,
                        std::string *text) {
-  size_t delimiter_len = utils::UTF8String::CountUTF8WordCnt(delimiter);
+  size_t delimiter_len = utils::count_utf8_word_cnt(delimiter);
   const char *row = nullptr;
   size_t row_len = 0;
   for (bool f = find_tag(xml, "<row", &row, &row_len); f && *max_len > 0;
@@ -458,13 +466,11 @@ int ms_xlsx_fetch_text(const char *xml, size_t xml_len,
       }
       std::string val(v + v_len, v_end - (v + v_len));
 
+      static const std::string ignore_str = "_";
       const std::string *cell_text = &val;
       if (is_sst_tag(c, c_len)) {
         size_t id = atoi(val.c_str());
-        if (id >= sst.size()) {
-          continue;
-        }
-        cell_text = &sst[id];
+        cell_text = id >= sst.size() ? &ignore_str : &sst[id];
       }
 
       if (!empty_row) {
@@ -489,10 +495,10 @@ int ms_xlsx_fetch_text(const char *xml, size_t xml_len,
   return 0;
 }
 
-int MsXLSxFetchText(ZipHelper &zip, size_t max_len,
+int MsXLSxFetchText(ZipHelper &zip, size_t max_len, int max_sst_cnt,
                     const std::string &delimiter, std::string *text) {
   std::vector<std::string> sst;
-  if (MsXLSxFetchSST(zip, &sst) != 0) {
+  if (MsXLSxFetchSST(zip, max_sst_cnt, &sst) != 0) {
     return -1;
   }
 

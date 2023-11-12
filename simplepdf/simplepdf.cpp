@@ -15,7 +15,7 @@
 #define _STYLE_Info  "\e[3;32m"
 #define _STYLE_Warn  "\e[3;33m"
 #define _STYLE_Err   "\e[3;31m"
-#define xmlog(_type_, _fmt_, ...)                                     \
+#define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
