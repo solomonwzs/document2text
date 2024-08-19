@@ -4,22 +4,37 @@
 #include <poppler/TextOutputDev.h>
 #include <stdio.h>
 
-#include <map>
 #include <memory>
-#include <string>
-#include <vector>
 
 #include "simplepdf/imgoutputdev.h"
 
 #define _STYLE_Debug "\e[3;36m"
-#define _STYLE_Info  "\e[3;32m"
-#define _STYLE_Warn  "\e[3;33m"
-#define _STYLE_Err   "\e[3;31m"
+#define _STYLE_Info "\e[3;32m"
+#define _STYLE_Warn "\e[3;33m"
+#define _STYLE_Err "\e[3;31m"
 #define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 namespace simplepdf {
+
+class _SimpleTextOutputDev : public TextOutputDev {
+ public:
+  _SimpleTextOutputDev() : TextOutputDev(nullptr, false, 0, false, false) {}
+  virtual ~_SimpleTextOutputDev() {}
+
+  bool radialShadedFill(GfxState * /*state*/, GfxRadialShading * /*shading*/,
+                        double /*sMin*/, double /*sMax*/) override {
+    return true;
+  }
+
+  bool useShadedFills(int type) override {
+    return type == 3;
+  }
+  // void drawImage(GfxState *state, Object *ref, Stream *str, int width,
+  //                int height, GfxImageColorMap *colorMap, bool interpolate,
+  //                const int *maskColors, bool inlineImg) override {}
+};
 
 void Init(const char *poppler_data_dir) {
   globalParams =
@@ -66,7 +81,7 @@ std::unique_ptr<GooString> SimplePDF::PageText(int n) {
     return nullptr;
   }
 
-  TextOutputDev out(nullptr, false, 0, false, false);
+  _SimpleTextOutputDev out;
   page->displaySlice(&out, 72, 72, 0, false, false, -1, -1, -1, -1, false);
   double w = page->getMediaWidth();
   double h = page->getMediaHeight();

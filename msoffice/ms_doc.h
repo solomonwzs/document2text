@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "msoffice/compound_document.h"
+#include "msoffice/utils.h"
 
 namespace msoffice {
 
@@ -27,22 +28,54 @@ struct fib_base_t {
   uint32_t reserved6;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint8_t fDot() const { return _nth_bit(flags1, 0); }
-  inline uint8_t fGlsy() const { return _nth_bit(flags1, 1); }
-  inline uint8_t fComplex() const { return _nth_bit(flags1, 2); }
-  inline uint8_t fHasPic() const { return _nth_bit(flags1, 3); }
-  inline uint8_t cQuickSaves() const { return flags1 >> 4; }
-  inline uint8_t fEncrypted() const { return _nth_bit(flags2, 0); }
-  inline uint8_t fWhichTblStm() const { return _nth_bit(flags2, 1); }
-  inline uint8_t fReadOnlyRecommended() const { return _nth_bit(flags2, 2); }
-  inline uint8_t fWriteReservation() const { return _nth_bit(flags2, 3); }
-  inline uint8_t fExtChar() const { return _nth_bit(flags2, 4); }
-  inline uint8_t fLoadOverride() const { return _nth_bit(flags2, 5); }
-  inline uint8_t fFarEast() const { return _nth_bit(flags2, 6); }
-  inline uint8_t fObfuscated() const { return flags2 >> 7; }
-  inline uint8_t fMac() const { return _nth_bit(flags3, 0); }
-  inline uint8_t fEmptySpecial() const { return _nth_bit(flags3, 1); }
-  inline uint8_t fLoadOverridePage() const { return _nth_bit(flags3, 2); }
+  inline uint8_t fDot() const {
+    return _nth_bit(flags1, 0);
+  }
+  inline uint8_t fGlsy() const {
+    return _nth_bit(flags1, 1);
+  }
+  inline uint8_t fComplex() const {
+    return _nth_bit(flags1, 2);
+  }
+  inline uint8_t fHasPic() const {
+    return _nth_bit(flags1, 3);
+  }
+  inline uint8_t cQuickSaves() const {
+    return flags1 >> 4;
+  }
+  inline uint8_t fEncrypted() const {
+    return _nth_bit(flags2, 0);
+  }
+  inline uint8_t fWhichTblStm() const {
+    return _nth_bit(flags2, 1);
+  }
+  inline uint8_t fReadOnlyRecommended() const {
+    return _nth_bit(flags2, 2);
+  }
+  inline uint8_t fWriteReservation() const {
+    return _nth_bit(flags2, 3);
+  }
+  inline uint8_t fExtChar() const {
+    return _nth_bit(flags2, 4);
+  }
+  inline uint8_t fLoadOverride() const {
+    return _nth_bit(flags2, 5);
+  }
+  inline uint8_t fFarEast() const {
+    return _nth_bit(flags2, 6);
+  }
+  inline uint8_t fObfuscated() const {
+    return flags2 >> 7;
+  }
+  inline uint8_t fMac() const {
+    return _nth_bit(flags3, 0);
+  }
+  inline uint8_t fEmptySpecial() const {
+    return _nth_bit(flags3, 1);
+  }
+  inline uint8_t fLoadOverridePage() const {
+    return _nth_bit(flags3, 2);
+  }
 #undef _nth_bit
 } __attribute__((packed));
 
@@ -239,9 +272,15 @@ struct Pcd_FcCompressed_t {
   uint32_t flags;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint32_t fc() const { return (flags << 2) >> 2; }
-  inline uint32_t fCompressed() const { return _nth_bit(flags, 30); }
-  inline uint32_t r1() const { return _nth_bit(flags, 31); }
+  inline uint32_t fc() const {
+    return (flags << 2) >> 2;
+  }
+  inline uint32_t fCompressed() const {
+    return _nth_bit(flags, 30);
+  }
+  inline uint32_t r1() const {
+    return _nth_bit(flags, 31);
+  }
 #undef _nth_bit
 } __attribute__((packed));
 
@@ -249,8 +288,12 @@ struct Pcd_Prm0_t {
   uint8_t flags1;
   uint8_t val;
 
-  inline uint8_t fComplex() const { return flags1 & 1; }
-  inline uint8_t isprm() const { return flags1 >> 1; }
+  inline uint8_t fComplex() const {
+    return flags1 & 1;
+  }
+  inline uint8_t isprm() const {
+    return flags1 >> 1;
+  }
 } __attribute__((packed));
 
 struct Pcd_t {
@@ -259,10 +302,18 @@ struct Pcd_t {
   Pcd_Prm0_t prm0;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint16_t fNoParaLast() const { return _nth_bit(flags, 0); }
-  inline uint16_t fR1() const { return _nth_bit(flags, 1); }
-  inline uint16_t fDirty() const { return _nth_bit(flags, 2); }
-  inline uint16_t fR2() const { return flags >> 3; }
+  inline uint16_t fNoParaLast() const {
+    return _nth_bit(flags, 0);
+  }
+  inline uint16_t fR1() const {
+    return _nth_bit(flags, 1);
+  }
+  inline uint16_t fDirty() const {
+    return _nth_bit(flags, 2);
+  }
+  inline uint16_t fR2() const {
+    return flags >> 3;
+  }
 #undef _nth_bit
 } __attribute__((packed));
 
@@ -271,8 +322,12 @@ class PlcPcd {
   int ParseFrom(const FibRgFcLcb97_t& fib_rg_fc_lcb97,
                 const std::vector<char>& table_stream);
 
-  inline const std::vector<int32_t>& GetCP() const { return m_cp; }
-  inline const std::vector<Pcd_t>& GetPcd() const { return m_pcd; }
+  inline const std::vector<int32_t>& GetCP() const {
+    return m_cp;
+  }
+  inline const std::vector<Pcd_t>& GetPcd() const {
+    return m_pcd;
+  }
 
  private:
   std::vector<int32_t> m_cp;

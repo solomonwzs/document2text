@@ -1,18 +1,17 @@
-#include "msoffice/ms_xls.h"
+#include "msoffice/ms_xls/ms_xls.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
-#include <codecvt>
-#include <locale>
 #include <unordered_map>
 
+#include "msoffice/ms_xls/crypt/Decryptor.h"
+#include "msoffice/utils.h"
 #include "utils/utils.h"
 
-#define _STYLE_Info  "\e[3;32m"
-#define _STYLE_Err   "\e[3;31m"
-#define _STYLE_Warn  "\e[3;33m"
+#define _STYLE_Info "\e[3;32m"
+#define _STYLE_Err "\e[3;31m"
+#define _STYLE_Warn "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
 #define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
@@ -389,6 +388,50 @@ const std::string &Identifier2Name(uint16_t identifier) {
 
 // =============================================================================
 
+static void decrypt_record(CRYPT::DecryptorPtr decry_ptr,
+                           const record_header_t &rh, char *data,
+                           size_t offset) {
+  if (rh.identifier == kRecord_BoundSheet8) {
+    decry_ptr->Decrypt(data + offset + sizeof(uint32_t),
+                       rh.size - sizeof(uint32_t), offset + sizeof(uint32_t),
+                       1024);
+  } else {
+    decry_ptr->Decrypt(data + offset, rh.size, offset, 1024);
+  }
+}
+
+static CRYPT::DecryptorPtr get_decryptor(
+    const char *data, const std::wstring &password = L"VelvetSweatshop") {
+  CRYPT::_rc4CryptData rc4_crypt_data;
+  CRYPT::DecryptorPtr decry_ptr = nullptr;
+
+  auto encryption_type = *reinterpret_cast<const int16_t *>(data);
+  if (encryption_type == 0x0000) {
+    auto xor_hdr = reinterpret_cast<const CRYPT::_xorCryptData *>(data + 2);
+    decry_ptr = CRYPT::DecryptorPtr(
+        new CRYPT::XORDecryptor(2, xor_hdr->key, xor_hdr->hash, password));
+  } else {
+    auto encryption_info = *reinterpret_cast<const int16_t *>(data + 2);
+    if (encryption_info == 0x0001) {
+      auto encryption_hdr =
+          reinterpret_cast<const rc4_encryption_header_t *>(data + 2);
+      rc4_crypt_data = encryption_hdr->data;
+      decry_ptr = CRYPT::DecryptorPtr(
+          new CRYPT::RC4Decryptor(rc4_crypt_data, password));
+    } else {
+      slog(Err, "encryption not support, val %d", encryption_info);
+      return nullptr;
+    }
+  }
+
+  if (decry_ptr == nullptr || !decry_ptr->IsVerify()) {
+    slog(Err, "get decryptor fail");
+    return nullptr;
+  } else {
+    return decry_ptr;
+  }
+}
+
 template <typename T>
 static inline int get_val_and_move(const char *data, size_t data_len,
                                    size_t *offset, T *val) {
@@ -456,7 +499,9 @@ static int append_rgb_string_with_continue(const char *data, size_t data_len,
 
     auto next_rh = reinterpret_cast<const record_header_t *>(data + *offset);
     if (next_rh->identifier != kRecord_Continue ||
-        *offset + next_rh->size > data_len) {
+        *offset + sizeof(record_header_t) + next_rh->size > data_len) {
+      // slog(Debug, "%s, %d", Identifier2Name(next_rh->identifier).c_str(),
+      //       next_rh->size);
       return -1;
     }
     *curr_block_end = *offset + sizeof(record_header_t) + next_rh->size;
@@ -476,20 +521,16 @@ static int append_rgb_string_with_continue(const char *data, size_t data_len,
 }
 
 ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
-                         size_t data_len, int max_sst_cnt,
+                         size_t data_len, size_t offset, int max_sst_cnt,
                          std::vector<XLUnicodeRichExtendedString> *sst) {
-  if (max_sst_cnt <= 0) {
-    max_sst_cnt = std::numeric_limits<int>::max();
-  }
-
-  size_t curr_block_end = rh.size;
+  size_t curr_block_end = offset + rh.size;
   if (curr_block_end > data_len) {
     return -1;
   }
 
-  auto csTotal = reinterpret_cast<const int32_t *>(data);
+  auto csTotal = reinterpret_cast<const int32_t *>(data + offset);
   auto cstUnique = csTotal + 1;
-  size_t offset = sizeof(int32_t) * 2;
+  offset += sizeof(int32_t) * 2;
   if (offset > curr_block_end || *csTotal < 0 || *cstUnique < 0) {
     slog(Err, "csTotal %d, cstUnique %d", *csTotal, *cstUnique);
     return -1;
@@ -546,12 +587,12 @@ ssize_t ReadAndParse1stSubstream(
     if (rh->identifier == kRecord_EOF) {
       return offset;
     } else if (rh->identifier == kRecord_SST) {
-      ssize_t ofs = FetchTextFromSST(*rh, data + offset, data_len - offset,
-                                     max_sst_cnt, sst);
+      ssize_t ofs =
+          FetchTextFromSST(*rh, data, data_len, offset, max_sst_cnt, sst);
       if (ofs < 0) {
         return -1;
       }
-      offset += ofs;
+      offset = ofs;
       continue;
     } else if (rh->identifier == kRecord_BoundSheet8) {
       BoundSheet8 b;
@@ -559,9 +600,9 @@ ssize_t ReadAndParse1stSubstream(
         return -1;
       }
       bs->push_back(std::move(b));
-    } else if (rh->identifier == kRecord_FilePass) {
-      slog(Err, "file was encrypted");
-      return -1;
+      // } else if (rh->identifier == kRecord_FilePass) {
+      //   slog(Err, "file was encrypted");
+      //   return -1;
     }
 
     offset += rh->size;
@@ -619,6 +660,16 @@ ssize_t XLUnicodeRichExtendedString::ReadAndParse(const char *data,
   // ExtRst (optional)
   if (m_hdr.fExtSt() == 0x1) {
     ofs += cbExtRst;
+  }
+
+  if (ofs > *curr_block_end) {
+    auto next_rh =
+        get_ptr_and_move<record_header_t>(data, data_len, curr_block_end);
+    if (next_rh == nullptr || next_rh->identifier != kRecord_Continue) {
+      return -1;
+    }
+    *curr_block_end += next_rh->size;
+    ofs += sizeof(record_header_t);
   }
 
   return ofs - offset;
@@ -768,7 +819,7 @@ int MsXLS::ParseFromFile(const std::string &filename) {
 int MsXLS::parse() {
   m_idx_workbook = -1;
   auto &dirs = m_comp_doc.GetDirEntries();
-  for (int i = 0; i < dirs.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
     if (dirs[i].type == kDirEntryTypeEmpty) {
       continue;
     }
@@ -862,8 +913,8 @@ static void to_string(const RkNumber_t &rk, std::vector<char> *buf) {
 
 int MsXLS::FetchText(const fetch_text_options_t *user_opts,
                      std::string *text) const {
-  static const fetch_text_options_t default_opts;
-  fetch_text_options_t opts = user_opts != nullptr ? *user_opts : default_opts;
+  fetch_text_options_t opts =
+      user_opts != nullptr ? *user_opts : __defaultFetchTextOptions;
   size_t delimiter_cch = utils::count_utf8_word_cnt(opts.xls_delimiter);
 
   std::vector<char> workbook_stream;
@@ -871,6 +922,10 @@ int MsXLS::FetchText(const fetch_text_options_t *user_opts,
                                    &workbook_stream) != 0) {
     return -1;
   }
+  if (Decrypt(workbook_stream.data(), workbook_stream.size()) != 0) {
+    return -1;
+  }
+
   const char *data = workbook_stream.data();
   size_t data_len = workbook_stream.size();
 
@@ -1007,6 +1062,44 @@ int MsXLS::FetchText(const fetch_text_options_t *user_opts,
   return 0;
 
 #undef _get_ptr
+}
+
+int Decrypt(char *data, size_t data_len, const std::wstring &password) {
+  CRYPT::DecryptorPtr decry_ptr = nullptr;
+
+  for (size_t offset = 0; offset < data_len;) {
+    auto rh = reinterpret_cast<const record_header_t *>(data + offset);
+    if (offset + sizeof(record_header_t) > data_len ||
+        offset + sizeof(record_header_t) + rh->size > data_len) {
+      break;
+    }
+    offset += sizeof(msoffice::xls::record_header_t);
+
+    if (rh->identifier == kRecord_FilePass) {
+      decry_ptr = get_decryptor(data + offset, password);
+      if (decry_ptr == nullptr) {
+        return -1;
+      }
+    } else if (decry_ptr != nullptr) {
+      switch (rh->identifier) {
+        case kRecord_BoundSheet8:
+        case kRecord_Continue:
+        case kRecord_LabelSst:
+        case kRecord_RK:
+        case kRecord_MulRk:
+        case kRecord_Number:
+        case kRecord_Blank:
+        case kRecord_MulBlank:
+        case kRecord_SST:
+          decrypt_record(decry_ptr, *rh, data, offset);
+          break;
+        default:
+          break;
+      }
+    }
+    offset += rh->size;
+  }
+  return 0;
 }
 
 }  // namespace xls

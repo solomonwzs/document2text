@@ -4,6 +4,8 @@
 #include <vector>
 
 #include "msoffice/compound_document.h"
+#include "msoffice/ms_xls/crypt/Crypt.h"
+#include "msoffice/utils.h"
 
 namespace msoffice {
 
@@ -378,6 +380,12 @@ enum document_type_t {
   kDT_MacroSheetSubstream = 0x0040,
 };
 
+struct rc4_encryption_header_t {
+  int16_t vMajor;
+  int16_t vMinor;
+  CRYPT::_rc4CryptData data;
+} __attribute__((packed));
+
 struct BOF_t {
   uint16_t vers;
   uint16_t bt;
@@ -389,18 +397,42 @@ struct BOF_t {
   uint16_t reserved;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint8_t fWin() const { return _nth_bit(flags1, 0); }
-  inline uint8_t fRisc() const { return _nth_bit(flags1, 1); }
-  inline uint8_t fBeta() const { return _nth_bit(flags1, 2); }
-  inline uint8_t fWinAny() const { return _nth_bit(flags1, 3); }
-  inline uint8_t fMacAny() const { return _nth_bit(flags1, 4); }
-  inline uint8_t fBetaAny() const { return _nth_bit(flags1, 5); }
-  inline uint8_t fRiscAny() const { return _nth_bit(flags1, 8); }
-  inline uint8_t fOOM() const { return _nth_bit(flags1, 9); }
-  inline uint8_t fGlJmp() const { return _nth_bit(flags1, 10); }
-  inline uint8_t fFontLimit() const { return _nth_bit(flags1, 13); }
-  inline uint8_t verXLHigh() const { return (flags1 >> 14) & 0b1111; }
-  inline uint8_t verLastXLSaved() const { return flags2 & 0b1111; }
+  inline uint8_t fWin() const {
+    return _nth_bit(flags1, 0);
+  }
+  inline uint8_t fRisc() const {
+    return _nth_bit(flags1, 1);
+  }
+  inline uint8_t fBeta() const {
+    return _nth_bit(flags1, 2);
+  }
+  inline uint8_t fWinAny() const {
+    return _nth_bit(flags1, 3);
+  }
+  inline uint8_t fMacAny() const {
+    return _nth_bit(flags1, 4);
+  }
+  inline uint8_t fBetaAny() const {
+    return _nth_bit(flags1, 5);
+  }
+  inline uint8_t fRiscAny() const {
+    return _nth_bit(flags1, 8);
+  }
+  inline uint8_t fOOM() const {
+    return _nth_bit(flags1, 9);
+  }
+  inline uint8_t fGlJmp() const {
+    return _nth_bit(flags1, 10);
+  }
+  inline uint8_t fFontLimit() const {
+    return _nth_bit(flags1, 13);
+  }
+  inline uint8_t verXLHigh() const {
+    return (flags1 >> 14) & 0b1111;
+  }
+  inline uint8_t verLastXLSaved() const {
+    return flags2 & 0b1111;
+  }
 #undef _nth_bit
 } __attribute__((packed));
 
@@ -416,16 +448,34 @@ struct Row_t {
   uint16_t flags2;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint8_t iOutLevel() const { return flags1 & 0b111; }
-  inline uint8_t fCollapsed() const { return _nth_bit(flags1, 4); }
-  inline uint8_t fDyZero() const { return _nth_bit(flags1, 5); }
-  inline uint8_t fUnsynced() const { return _nth_bit(flags1, 6); }
-  inline uint8_t fGhostDirty() const { return _nth_bit(flags1, 7); }
+  inline uint8_t iOutLevel() const {
+    return flags1 & 0b111;
+  }
+  inline uint8_t fCollapsed() const {
+    return _nth_bit(flags1, 4);
+  }
+  inline uint8_t fDyZero() const {
+    return _nth_bit(flags1, 5);
+  }
+  inline uint8_t fUnsynced() const {
+    return _nth_bit(flags1, 6);
+  }
+  inline uint8_t fGhostDirty() const {
+    return _nth_bit(flags1, 7);
+  }
 
-  inline uint16_t ixfe_val() const { return flags2 & 0b111111111111; }
-  inline uint8_t fExAsc() const { return _nth_bit(flags2, 12); }
-  inline uint8_t fExDes() const { return _nth_bit(flags2, 13); }
-  inline uint8_t fPhonetic() const { return _nth_bit(flags2, 14); }
+  inline uint16_t ixfe_val() const {
+    return flags2 & 0b111111111111;
+  }
+  inline uint8_t fExAsc() const {
+    return _nth_bit(flags2, 12);
+  }
+  inline uint8_t fExDes() const {
+    return _nth_bit(flags2, 13);
+  }
+  inline uint8_t fPhonetic() const {
+    return _nth_bit(flags2, 14);
+  }
 #undef _nth_bit
 } __attribute__((packed));
 
@@ -461,9 +511,15 @@ struct RkNumber_t {
   uint32_t flags;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-  inline uint8_t fX100() const { return _nth_bit(flags, 0); }
-  inline uint8_t fInt() const { return _nth_bit(flags, 1); }
-  inline uint32_t num() const { return flags >> 2; }
+  inline uint8_t fX100() const {
+    return _nth_bit(flags, 0);
+  }
+  inline uint8_t fInt() const {
+    return _nth_bit(flags, 1);
+  }
+  inline uint32_t num() const {
+    return flags >> 2;
+  }
 #undef _nth_bit
 
   double value() const;
@@ -484,10 +540,18 @@ class MulRk {
  public:
   int ParseFrom(const char *data, size_t data_len);
 
-  inline uint16_t Rw() const { return m_rw; }
-  inline uint16_t ColFirst() const { return m_colFirst; }
-  inline uint16_t ColLast() const { return m_colLast; }
-  inline const std::vector<RkRec_t> &RgRkrec() const { return m_rgrkrec; }
+  inline uint16_t Rw() const {
+    return m_rw;
+  }
+  inline uint16_t ColFirst() const {
+    return m_colFirst;
+  }
+  inline uint16_t ColLast() const {
+    return m_colLast;
+  }
+  inline const std::vector<RkRec_t> &RgRkrec() const {
+    return m_rgrkrec;
+  }
 
  private:
   uint16_t m_rw;
@@ -500,9 +564,15 @@ class MulBlank {
  public:
   int ParseFrom(const char *data, size_t data_len);
 
-  inline uint16_t Rw() const { return m_rw; }
-  inline uint16_t ColFirst() const { return m_colFirst; }
-  inline uint16_t ColLast() const { return m_colLast; }
+  inline uint16_t Rw() const {
+    return m_rw;
+  }
+  inline uint16_t ColFirst() const {
+    return m_colFirst;
+  }
+  inline uint16_t ColLast() const {
+    return m_colLast;
+  }
 
  private:
   uint16_t m_rw;
@@ -514,8 +584,12 @@ class ShortXLUnicodeString {
  public:
   ssize_t ReadAndParse(const char *data, size_t data_len);
 
-  inline const std::string &String() const { return m_str; }
-  inline uint8_t Cch() const { return m_cch; }
+  inline const std::string &String() const {
+    return m_str;
+  }
+  inline uint8_t Cch() const {
+    return m_cch;
+  }
 
  private:
   uint8_t m_cch;
@@ -529,17 +603,27 @@ class XLUnicodeRichExtendedString {
     uint8_t flags1;
 
 #define _nth_bit(_f, _nth) (((_f) & (1u << (_nth))) >> _nth)
-    inline const uint8_t fHighByte() const { return _nth_bit(flags1, 0); }
-    inline const uint8_t fExtSt() const { return _nth_bit(flags1, 2); }
-    inline const uint8_t fRichSt() const { return _nth_bit(flags1, 3); }
+    inline uint8_t fHighByte() const {
+      return _nth_bit(flags1, 0);
+    }
+    inline uint8_t fExtSt() const {
+      return _nth_bit(flags1, 2);
+    }
+    inline uint8_t fRichSt() const {
+      return _nth_bit(flags1, 3);
+    }
 #undef _nth_bit
   } __attribute__((packed));
 
   ssize_t ReadAndParse(const char *data, size_t data_len, size_t offset,
                        size_t *curr_block_end);
 
-  inline const hdr_t &Hdr() const { return m_hdr; }
-  inline const std::string &String() const { return m_str; }
+  inline const hdr_t &Hdr() const {
+    return m_hdr;
+  }
+  inline const std::string &String() const {
+    return m_str;
+  }
 
  private:
   hdr_t m_hdr;
@@ -557,10 +641,18 @@ class BoundSheet8 {
 
   int ParseFrom(const char *data, size_t data_len);
 
-  inline uint32_t LbPlyPos() const { return m_lbPlyPos; }
-  inline uint8_t HsState() const { return m_hsState; }
-  inline uint8_t Dt() const { return m_dt; }
-  inline const ShortXLUnicodeString &Name() const { return m_name; }
+  inline uint32_t LbPlyPos() const {
+    return m_lbPlyPos;
+  }
+  inline uint8_t HsState() const {
+    return m_hsState;
+  }
+  inline uint8_t Dt() const {
+    return m_dt;
+  }
+  inline const ShortXLUnicodeString &Name() const {
+    return m_name;
+  }
 
  private:
   uint32_t m_lbPlyPos;
@@ -608,13 +700,16 @@ class MsXLS {
 const std::string &Identifier2Name(uint16_t identifier);
 
 ssize_t FetchTextFromSST(const record_header_t &rh, const char *data,
-                         size_t data_len, int max_sst_cnt,
+                         size_t data_len, size_t offset, int max_sst_cnt,
                          std::vector<XLUnicodeRichExtendedString> *sst);
 
 ssize_t ReadAndParse1stSubstream(const char *data, size_t data_len,
                                  int max_sst_cnt,
                                  std::vector<BoundSheet8> *bs_list,
                                  std::vector<XLUnicodeRichExtendedString> *sst);
+
+int Decrypt(char *data, size_t data_len,
+            const std::wstring &password = L"VelvetSweatshop");
 
 }  // namespace xls
 

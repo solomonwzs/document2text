@@ -3,10 +3,10 @@
 NAME	= document2text
 
 CXX			= g++
-CXXFLAGS	= -Wall -fpic -g -c -std=c++17 -O2 \
+CXXFLAGS	= -Wall -fpic -g -c -std=c++20 -O2 \
 			  -I. -I/usr/include/poppler \
 			  -Wno-sign-compare -Wno-address-of-packed-member
-CXXSRC		= $(wildcard ./*.cpp ./*/*.cpp)
+CXXSRC		= $(wildcard ./*.cpp ./*/*.cpp ./*/*/*.cpp ./*/*/*/*.cpp ./*/*/*/*/*.cpp)
 CXXOBJ		= $(CXXSRC:%.cpp=%-cpp.o)
 CXXDEP		= $(CXXOBJ:%-cpp.o=%-cpp.d)
 

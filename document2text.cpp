@@ -6,7 +6,7 @@
 
 #include "msoffice/ms_doc.h"
 #include "msoffice/ms_ppt.h"
-#include "msoffice/ms_xls.h"
+#include "msoffice/ms_xls/ms_xls.h"
 #include "msoffice/officex.h"
 #include "simplepdf/simplepdf.h"
 #include "utils/utils.h"
@@ -35,8 +35,20 @@ struct fetch_opts_t {
   document_type_t type;
 };
 
-static inline bool is_document_pdf(const char *p, size_t plen) {
-  return plen > 4 && p != nullptr && strncmp(p, "%PDF", 4) == 0;
+static bool is_document_pdf(const char *p, size_t plen) {
+  if (plen > 5 && p != nullptr && strncmp(p, "%PDF-", 5) == 0) {
+    return true;
+  }
+  std::vector<char> buf(128);
+  size_t len = std::min(plen, buf.size() - 1);
+  memcpy(buf.data(), p, len);
+  buf[len] = 0;
+  for (size_t i = 0; i < len; ++i) {
+    if (buf[i] == 0) {
+      buf[i] = 1;
+    }
+  }
+  return strstr(buf.data(), "%PDF-") != nullptr;
 }
 
 static inline bool is_zip(const char *p, size_t plen) {
@@ -86,6 +98,14 @@ doc2txt_result_t document2text(const char *data, size_t len,
                     opts.max_fetch_pdf_page_cnt, text);
   }
 
+  msoffice::fetch_text_options_t fopts;
+  fopts.max_fetch_text_len = opts.max_fetch_text_len;
+  fopts.fetch_text_from_drawing = true;
+  fopts.xls_delimiter = ",";
+  fopts.xls_skip_blank_cell = true;
+  fopts.xls_max_sst_cnt = opts.max_xls_sst_cnt;
+  fopts.xml_max_file_len = 1024 * 1024;
+
   if (is_zip(data, len)) {
     msoffice::officex::ZipHelper zip;
     if (zip.OpenFromBytes(data, len) != 0) {
@@ -107,19 +127,15 @@ doc2txt_result_t document2text(const char *data, size_t len,
     }
 
     if (*type == kDocTypeDOCX) {
-      return msoffice::officex::MsDOCxFetchText(zip, opts.max_fetch_text_len,
-                                                text) == 0
+      return msoffice::officex::MsDOCxFetchText(zip, &fopts, text) == 0
                  ? kDoc2txtOK
                  : kDoc2txtConvertErr;
     } else if (*type == kDocTypePPTX) {
-      return msoffice::officex::MsPPTxFetchText(zip, opts.max_fetch_text_len,
-                                                text) == 0
+      return msoffice::officex::MsPPTxFetchText(zip, &fopts, text) == 0
                  ? kDoc2txtOK
                  : kDoc2txtConvertErr;
     } else if (*type == kDocTypeXLSX) {
-      return msoffice::officex::MsXLSxFetchText(zip, opts.max_fetch_text_len,
-                                                opts.max_xls_sst_cnt, ",",
-                                                text) == 0
+      return msoffice::officex::MsXLSxFetchText(zip, &fopts, text) == 0
                  ? kDoc2txtOK
                  : kDoc2txtConvertErr;
     } else {
@@ -154,13 +170,6 @@ doc2txt_result_t document2text(const char *data, size_t len,
       }
     }
   }
-
-  msoffice::fetch_text_options_t fopts;
-  fopts.max_fetch_text_len = opts.max_fetch_text_len;
-  fopts.fetch_text_from_drawing = true;
-  fopts.xls_delimiter = ",";
-  fopts.xls_skip_blank_cell = true;
-  fopts.xls_max_sst_cnt = opts.max_xls_sst_cnt;
 
   if (*type == kDocTypeDOC) {
     msoffice::doc::MsDOC doc;

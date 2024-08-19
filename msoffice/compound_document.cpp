@@ -5,23 +5,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <codecvt>
-#include <locale>
-#include <memory>
-#include <numeric>
+#include <cmath>
 
 #include "utils/utils.h"
 
-#define _STYLE_Info  "\e[3;32m"
-#define _STYLE_Err   "\e[3;31m"
-#define _STYLE_Warn  "\e[3;33m"
+#define _STYLE_Info "\e[3;32m"
+#define _STYLE_Err "\e[3;31m"
+#define _STYLE_Warn "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
 #define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 #define CONCAT_(_A, _B) _A##_B
-#define CONCAT(_A, _B)  CONCAT_(_A, _B)
+#define CONCAT(_A, _B) CONCAT_(_A, _B)
 #define _defer(_fn_) \
   std::shared_ptr<void> CONCAT(__defer, __LINE__)(nullptr, _fn_)
 
@@ -71,6 +68,48 @@ size_t short_sect_pos(const compound_doc_header_t &hdr, uint32_t sectid) {
 
 // =============================================================================
 
+void rc4_setup(rc4_state_t *state, const uint8_t *key, size_t klen) {
+  state->x = 0;
+  state->y = 0;
+  state->m.resize(256);
+
+  for (int i = 0; i < 256; ++i) {
+    state->m[i] = i;
+  }
+
+  for (int i = 0, j = 0; i < 256; ++i) {
+    j = static_cast<uint8_t>((j + state->m[i] + key[i % klen]) & 0xff);
+    uint8_t tmp = state->m[i];
+    state->m[i] = state->m[j];
+    state->m[j] = tmp;
+  }
+}
+
+std::vector<uint8_t> rc4_crypt(rc4_state_t *state, const uint8_t *data,
+                               size_t dlen) {
+  uint8_t x = state->x;
+  uint8_t y = state->y;
+
+  std::vector<uint8_t> out(dlen);
+  memcpy(out.data(), data, dlen);
+  for (size_t i = 0; i < dlen; ++i) {
+    x = x + 1;
+    y = y + state->m[i];
+
+    uint8_t tmp = x;
+    x = y;
+    y = tmp;
+
+    out[i] ^= state->m[(state->m[x] + state->m[y]) & 0xff];
+  }
+  state->x = x;
+  state->y = y;
+
+  return out;
+}
+
+// =============================================================================
+
 const uint64_t CompoundDocument::_compound_document_doc_id = 0xE11AB1A1E011CFD0;
 
 int CompoundDocument::ParseFromFile(const std::string &filename) {
@@ -98,8 +137,14 @@ int CompoundDocument::get_master_sector_alloc_table(
     msat->push_back(hdr->sec_ids[i]);
   }
 
-  for (int32_t next_sec_id = hdr->sec_id_of_1st_sect_of_master_sect_alloc_table;
-       next_sec_id != kEndOfChainSecID;) {
+  int sec_cnt = std::ceil(static_cast<double>(data.size()) / (1 << hdr->ssz));
+  for (int32_t next_sec_id = hdr->sec_id_of_1st_sect_of_master_sect_alloc_table,
+               n = 0;
+       next_sec_id != kEndOfChainSecID &&
+       n < static_cast<int32_t>(
+               hdr->total_number_of_sect_used_for_master_sect_alloc_table) &&
+       n < sec_cnt;
+       ++n) {
     const char *sec_p;
     size_t size;
     if (get_sector(data, next_sec_id, &sec_p, &size) != 0) {
@@ -299,7 +344,7 @@ int CompoundDocument::get_sec_ids_chain(int32_t first_xsec_id,
                                         std::vector<int32_t> *chain) {
   for (int32_t sec_id = first_xsec_id; sec_id != kEndOfChainSecID;
        sec_id = xsat[chain->back()]) {
-    if (sec_id < 0 || sec_id >= xsat.size()) {
+    if (sec_id < 0 || sec_id >= static_cast<int>(xsat.size())) {
       return -1;
     }
 
@@ -321,34 +366,46 @@ int CompoundDocument::GetDirEntryStream(const directory_entry_t &dir_entry,
   stream->resize(dir_entry.size_of_x);
   return get_stream(
       dir_entry.sec_id_of_1st_x,
-      dir_entry.size_of_x < hdr->min_size_of_std_stream ? m_ssat : m_sat,
-      dir_entry.size_of_x < hdr->min_size_of_std_stream
+      dir_entry.size_of_x < static_cast<int>(hdr->min_size_of_std_stream)
+          ? m_ssat
+          : m_sat,
+      dir_entry.size_of_x < static_cast<int>(hdr->min_size_of_std_stream)
           ? &CompoundDocument::GetShortStreamSector
           : &CompoundDocument::GetSector,
       stream);
 }
 
-// =============================================================================
+std::set<int> CompoundDocument::GetValidDirIndex() const {
+  std::set<int> res;
+  // if (m_dir_entries.empty()) {
+  //   return res;
+  // }
 
-void RemoveControlCharacter(std::string *text) {
-  for (auto &ch : *text) {  // Remove control character
-    if (ch == '\r' || ch == '\n') {
-      ch = '\n';
-    } else if ((1 <= ch && ch <= 31) || ch == 127) {
-      ch = ' ';
-    }
-  }
-}
+  // std::vector<int> idx;
+  // idx.reserve(m_dir_entries.size());
+  // idx.push_back(0);
 
-int Utf16ToUtf8(const char16_t *begin, const char16_t *end, std::string *u8) {
-  std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> convert;
-  try {
-    *u8 = convert.to_bytes(begin, end);
-    return 0;
-  } catch (const std::exception &e) {
-    slog(Err, "u16_to_u8 err, %s", e.what());
-    return -1;
-  }
+  // for (size_t i = 0; i < idx.size(); ++i) {
+  //   res.insert(idx[i]);
+  //   auto &dir = m_dir_entries[idx[i]];
+  //   xmlog(Debug, "%d, %d", idx[i], m_sat[dir.sec_id_of_1st_x]);
+
+  //   if (dir.root_dir_id != -1 && dir.root_dir_id < m_dir_entries.size() &&
+  //       res.find(dir.root_dir_id) == res.end()) {
+  //     idx.push_back(dir.root_dir_id);
+  //   }
+  //   if (dir.left_child_dir_id != -1 &&
+  //       dir.left_child_dir_id < m_dir_entries.size() &&
+  //       res.find(dir.left_child_dir_id) == res.end()) {
+  //     idx.push_back(dir.left_child_dir_id);
+  //   }
+  //   if (dir.right_child_dir_id != -1 &&
+  //       dir.right_child_dir_id < m_dir_entries.size() &&
+  //       res.find(dir.right_child_dir_id) == res.end()) {
+  //     idx.push_back(dir.right_child_dir_id);
+  //   }
+  // }
+  return res;
 }
 
 }  // namespace msoffice

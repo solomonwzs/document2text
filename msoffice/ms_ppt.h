@@ -1,8 +1,10 @@
 #pragma once
 
+#include <map>
 #include <string>
 
 #include "msoffice/compound_document.h"
+#include "msoffice/utils.h"
 
 namespace msoffice {
 
@@ -13,8 +15,12 @@ struct record_header_t {
   uint16_t recType;
   uint32_t recLen;
 
-  inline uint16_t recVer() const { return flags & 0b1111; }
-  inline uint16_t recInstance() const { return flags >> 4; }
+  inline uint16_t recVer() const {
+    return flags & 0b1111;
+  }
+  inline uint16_t recInstance() const {
+    return flags >> 4;
+  }
 } __attribute__((packed));
 
 enum record_type_t {
@@ -261,9 +267,15 @@ class CurrentUserAtom {
  public:
   ssize_t ReadAndParse(const char *data, size_t size);
 
-  inline const hdr_t &Header() const { return m_hdr; }
-  inline const std::string UserName() const { return m_user_name; }
-  inline bool IsEncrypted() const { return m_hdr.headerToken == 0xF3D1C4DF; }
+  inline const hdr_t &Header() const {
+    return m_hdr;
+  }
+  inline const std::string UserName() const {
+    return m_user_name;
+  }
+  inline bool IsEncrypted() const {
+    return m_hdr.headerToken == 0xF3D1C4DF;
+  }
 
  private:
   hdr_t m_hdr;
@@ -291,8 +303,12 @@ struct PersistDirectoryEntry_t {
   uint32_t flags;
   uint32_t persistOffset[];
 
-  inline uint32_t persistId() const { return flags & ((1u << 20) - 1u); }
-  inline uint16_t cPersist() const { return flags >> 20; }
+  inline uint32_t persistId() const {
+    return flags & ((1u << 20) - 1u);
+  }
+  inline uint16_t cPersist() const {
+    return flags >> 20;
+  }
 } __attribute__((packed));
 
 class PersistDirectoryAtom {
@@ -304,7 +320,9 @@ class PersistDirectoryAtom {
       const UserEditAtom_t &user_edit_atom, const char *data, size_t data_len,
       std::vector<const PersistDirectoryEntry_t *> *entries);
 
-  inline const record_header_t &RecordHeader() const { return m_rh; }
+  inline const record_header_t &RecordHeader() const {
+    return m_rh;
+  }
   inline const std::vector<const PersistDirectoryEntry_t *> &Entries() const {
     return m_persistDirectoryEntry;
   }

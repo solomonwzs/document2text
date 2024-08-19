@@ -2,15 +2,10 @@
 
 #include <string.h>
 
-#include <codecvt>
-#include <limits>
-#include <locale>
-#include <memory>
-
 #include "utils/utils.h"
 
 #define CONCAT_(_A, _B) _A##_B
-#define CONCAT(_A, _B)  CONCAT_(_A, _B)
+#define CONCAT(_A, _B) CONCAT_(_A, _B)
 #define _defer(_fn_) \
   std::shared_ptr<void> CONCAT(__defer, __LINE__)(nullptr, _fn_)
 
@@ -35,8 +30,15 @@ int PlcPcd::ParseFrom(const FibRgFcLcb97_t &fib_rg_fc_lcb97,
     clx_m_ptr += 1 + 2 + *cbGrpprl;
   }
 
-  if (clx_m_ptr < table_stream.data() + table_stream.size() && *clxt == 0x02) {
-    pcdt_ptr = clx_ptr;
+  if (clx_m_ptr < table_stream.data() + table_stream.size()) {
+    if (*clxt == 0x02) {
+      pcdt_ptr = clx_ptr;
+    } else if (*clxt == 0x01) {
+      auto cb_grpprl = reinterpret_cast<const int16_t *>(clxt + 1);
+      pcdt_ptr = clx_ptr + 1 + *cb_grpprl;
+    } else {
+      return -1;
+    }
   } else {
     return -1;
   }
@@ -88,8 +90,12 @@ int MsDOC::parse() {
   m_idx_tab1 = -1;
   m_idx_word_doc = -1;
 
+  int len_tab0 = -1;
+  int len_tab1 = -1;
+  int len_word_doc = -1;
+
   auto &dirs = m_comp_doc.GetDirEntries();
-  for (int i = 0; i < dirs.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
     if (dirs[i].type == kDirEntryTypeEmpty) {
       continue;
     }
@@ -99,12 +105,16 @@ int MsDOC::parse() {
                     &dirname) != 0) {
       continue;
     }
-    if (dirname == g_0TableDirName) {
+    if (dirname == g_0TableDirName && len_tab0 < dirs[i].size_of_x) {
       m_idx_tab0 = i;
-    } else if (dirname == g_1TableDirName) {
+      len_tab0 = dirs[i].size_of_x;
+    } else if (dirname == g_1TableDirName && len_tab1 < dirs[i].size_of_x) {
       m_idx_tab1 = i;
-    } else if (dirname == g_WordDocDirName) {
+      len_tab1 = dirs[i].size_of_x;
+    } else if (dirname == g_WordDocDirName &&
+               len_word_doc < dirs[i].size_of_x) {
       m_idx_word_doc = i;
+      len_word_doc = dirs[i].size_of_x;
     }
   }
   if (m_idx_word_doc == -1 || (m_idx_tab0 == -1 && m_idx_tab1 == -1)) {
@@ -126,7 +136,7 @@ int MsDOC::FetchText(const fetch_text_options_t *opts,
   }
 
   auto fib_base = reinterpret_cast<fib_base_t *>(word_doc_stream.data());
-  if (fib_base->wIdent != _fib_base_wIdent) {
+  if (fib_base->wIdent != _fib_base_wIdent || fib_base->fEncrypted()) {
     return -1;
   }
 
@@ -151,9 +161,9 @@ int MsDOC::FetchText(const fetch_text_options_t *opts,
     return -1;
   }
 
-  size_t max_fetch_text_len = opts != nullptr
-                                  ? opts->max_fetch_text_len
-                                  : std::numeric_limits<size_t>::max();
+  size_t max_fetch_text_len =
+      opts != nullptr ? opts->max_fetch_text_len
+                      : __defaultFetchTextOptions.max_fetch_text_len;
   auto &cp_list = plc_pcd.GetCP();
   auto &pcd_list = plc_pcd.GetPcd();
   for (size_t i = 0; i < pcd_list.size() && max_fetch_text_len > 0; ++i) {

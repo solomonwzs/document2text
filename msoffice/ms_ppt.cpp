@@ -3,24 +3,20 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <codecvt>
 #include <functional>
-#include <limits>
-#include <locale>
-#include <memory>
 
 #include "utils/utils.h"
 
-#define _STYLE_Info  "\e[3;32m"
-#define _STYLE_Err   "\e[3;31m"
-#define _STYLE_Warn  "\e[3;33m"
+#define _STYLE_Info "\e[3;32m"
+#define _STYLE_Err "\e[3;31m"
+#define _STYLE_Warn "\e[3;33m"
 #define _STYLE_Debug "\e[3;36m"
 #define slog(_type_, _fmt_, ...)                                      \
   printf(_STYLE_##_type_ "%.1s [%s:%s:%d]\e[0m " _fmt_ "\n", #_type_, \
          __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 #define CONCAT_(_A, _B) _A##_B
-#define CONCAT(_A, _B)  CONCAT_(_A, _B)
+#define CONCAT(_A, _B) CONCAT_(_A, _B)
 #define _defer(_fn_) \
   std::shared_ptr<void> CONCAT(__defer, __LINE__)(nullptr, _fn_)
 
@@ -214,9 +210,6 @@ static int atom_list_fetch_text(const char *container_data,
 
 // =============================================================================
 
-static const std::string g_CurrentUserName = "Current User";
-static const std::string g_PowerPointDocumentName = "PowerPoint Document";
-
 int MsPPT::ParseFromFile(const std::string &filename) {
   std::vector<char> data;
   utils::read_file(filename.c_str(), &data);
@@ -231,7 +224,7 @@ int MsPPT::parse() {
   int32_t idx_ppt_doc = -1;
 
   auto &dirs = m_comp_doc.GetDirEntries();
-  for (int i = 0; i < dirs.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(dirs.size()); ++i) {
     if (dirs[i].type == kDirEntryTypeEmpty) {
       continue;
     }
@@ -318,8 +311,8 @@ int MsPPT::GetPersistId2Offset(const CurrentUserAtom &current_user_atom,
 
 int MsPPT::FetchText(const fetch_text_options_t *user_opts,
                      std::string *text) const {
-  static const fetch_text_options_t default_opts;
-  fetch_text_options_t opts = user_opts != nullptr ? *user_opts : default_opts;
+  fetch_text_options_t opts =
+      user_opts != nullptr ? *user_opts : __defaultFetchTextOptions;
 
   auto &dirs = m_comp_doc.GetDirEntries();
 
