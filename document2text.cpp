@@ -66,18 +66,15 @@ static doc2txt_result_t pdf2text(const char *data, size_t len,
        ++i) {
     try {
       auto t = pdf.PageText(i);
-      if (t == nullptr || t->c_str() == nullptr) {
-        continue;
-      }
 
-      size_t len = utils::count_utf8_word_cnt(t->c_str(), t->getLength());
+      size_t len = utils::count_utf8_word_cnt(t.c_str(), t.toStr().length());
       if (max_fetch_text_len >= len) {
-        text->append(t->c_str(), t->getLength());
+        text->append(t.c_str(), t.toStr().length());
         max_fetch_text_len -= len;
       } else {
         size_t offset =
-            utils::fix_utf8_word_cnt(t->c_str(), max_fetch_text_len);
-        text->append(t->c_str(), offset);
+            utils::fix_utf8_word_cnt(t.c_str(), max_fetch_text_len);
+        text->append(t.c_str(), offset);
         max_fetch_text_len = 0;
       }
     } catch (std::exception &ex) {
@@ -199,7 +196,7 @@ int main(int argc, char **argv) {
   assert(argc >= 2);
   const char *filename = argv[1];
 
-  simplepdf::Init(nullptr);
+  simplepdf::Init();
 
   std::vector<char> data;
   assert(utils::read_file(filename, &data) == 0);

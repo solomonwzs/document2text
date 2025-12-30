@@ -4,6 +4,7 @@
 #include <poppler/TextOutputDev.h>
 #include <stdio.h>
 
+#include <chrono>
 #include <memory>
 
 #include "simplepdf/imgoutputdev.h"
@@ -23,7 +24,7 @@ class _SimpleTextOutputDev : public TextOutputDev {
   _SimpleTextOutputDev() : TextOutputDev(nullptr, false, 0, false, false) {}
   virtual ~_SimpleTextOutputDev() {}
 
-  bool radialShadedFill(GfxState * /*state*/, GfxRadialShading * /*shading*/,
+  bool radialShadedFill(GfxState* /*state*/, GfxRadialShading* /*shading*/,
                         double /*sMin*/, double /*sMax*/) override {
     return true;
   }
@@ -36,13 +37,13 @@ class _SimpleTextOutputDev : public TextOutputDev {
   //                const int *maskColors, bool inlineImg) override {}
 };
 
-void Init(const char *poppler_data_dir) {
+void Init(const std::string& poppler_data_dir) {
   globalParams =
       std::unique_ptr<GlobalParams>(new GlobalParams(poppler_data_dir));
 }
 
-SimplePDF::SimplePDF(const char *buf, size_t buf_len) : m_doc(nullptr) {
-  MemStream *mem = new MemStream(buf, 0, buf_len, Object(objNull));
+SimplePDF::SimplePDF(const char* buf, size_t buf_len) : m_doc(nullptr) {
+  MemStream* mem = new MemStream(buf, 0, buf_len, Object::null());
   if (mem == nullptr) {
     return;
   }
@@ -65,28 +66,56 @@ int SimplePDF::PagesCnt() const {
 
 void SimplePDF::Debug() {
   for (int i = 1; i <= m_doc->getNumPages(); ++i) {
-    Page *page = m_doc->getPage(i);
+    Page* page = m_doc->getPage(i);
     ImageOutputDev out;
     page->displaySlice(&out, 72, 72, 0, false, false, -1, -1, -1, -1, false);
   }
 }
 
-std::unique_ptr<GooString> SimplePDF::PageText(int n) {
+static bool annot_display_decide_cbk(Annot* annot, void*) {
+  return false;
+}
+
+struct abort_chk_t {
+  std::chrono::time_point<std::chrono::high_resolution_clock> start;
+  bool abort;
+  uint32_t cnt;
+};
+static bool abort_check_cbk(void* ud) {
+  auto abort_chk = reinterpret_cast<abort_chk_t*>(ud);
+  abort_chk->cnt += 1;
+  // abort_chk->abort = time(nullptr) - abort_chk->start > 2;
+  abort_chk->abort =
+      abort_chk->cnt > 2000 ||
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::high_resolution_clock::now() - abort_chk->start)
+              .count() > 500;
+  return abort_chk->abort;
+}
+
+GooString SimplePDF::PageText(int n) {
   if (n < 1 || n > PagesCnt()) {
-    return nullptr;
+    return GooString("");
   }
 
-  Page *page = m_doc->getPage(n);
+  Page* page = m_doc->getPage(n);
   if (!page->isOk()) {
-    return nullptr;
+    return GooString("");
   }
+
+  abort_chk_t abort_chk;
+  abort_chk.start = std::chrono::high_resolution_clock::now();
+  abort_chk.abort = false;
+  abort_chk.cnt = 0;
 
   _SimpleTextOutputDev out;
-  page->displaySlice(&out, 72, 72, 0, false, false, -1, -1, -1, -1, false);
+  page->displaySlice(&out, 72, 72, 0, false, false, -1, -1, -1, -1, false,
+                     abort_check_cbk, &abort_chk, annot_display_decide_cbk,
+                     nullptr);
+
   double w = page->getMediaWidth();
   double h = page->getMediaHeight();
-  GooString *text = out.getText(0, 0, w, h);
-  return std::unique_ptr<GooString>(text);
+  return out.getText(0, 0, w, h);
 }
 
 }  // namespace simplepdf

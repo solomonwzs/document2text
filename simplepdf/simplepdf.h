@@ -7,21 +7,21 @@
 
 namespace simplepdf {
 
-void Init(const char *poppler_data_dir = nullptr);
+void Init(const std::string& poppler_data_dir = {});
 
 class SimplePDF {
  public:
-  SimplePDF(const char *buf, size_t buf_len);
+  SimplePDF(const char* buf, size_t buf_len);
   ~SimplePDF();
 
   bool IsOK() const;
   int PagesCnt() const;
-  std::unique_ptr<GooString> PageText(int n);
+  GooString PageText(int n);
 
   void Debug();
 
  private:
-  PDFDoc *m_doc;
+  PDFDoc* m_doc;
 };
 
 }  // namespace simplepdf
