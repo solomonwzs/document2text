@@ -1,5 +1,7 @@
 #include "simplepdf/imgoutputdev.h"
 
+#include <Stream.h>
+
 #include <stdio.h>
 
 #define _STYLE_Debug "\e[3;36m"
@@ -27,7 +29,9 @@ void ImageOutputDev::drawImage(GfxState *state, Object *ref, Stream *str,
   slog(Debug, "%d %d", width, height);
 
   str = str->getNextStream();
-  str->reset();
+  if (!str->rewind()) {
+    return;
+  }
 
   int c;
   size_t len = 0;

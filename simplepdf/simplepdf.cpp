@@ -43,11 +43,11 @@ void Init(const std::string& poppler_data_dir) {
 }
 
 SimplePDF::SimplePDF(const char* buf, size_t buf_len) : m_doc(nullptr) {
-  MemStream* mem = new MemStream(buf, 0, buf_len, Object::null());
+  auto mem = std::make_unique<MemStream>(buf, 0, buf_len, Object::null());
   if (mem == nullptr) {
     return;
   }
-  m_doc = new PDFDoc(mem);
+  m_doc = new PDFDoc(std::move(mem));
 }
 
 SimplePDF::~SimplePDF() {
@@ -115,7 +115,7 @@ GooString SimplePDF::PageText(int n) {
 
   double w = page->getMediaWidth();
   double h = page->getMediaHeight();
-  return out.getText(0, 0, w, h);
+  return out.getText(PDFRectangle(0,0, w, h));
 }
 
 }  // namespace simplepdf
